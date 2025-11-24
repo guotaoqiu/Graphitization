@@ -1,0 +1,150 @@
+================================================================================
+              HIGH-THROUGHPUT GRAPHITE DOPING WORKFLOW
+================================================================================
+
+                    ┌─────────────────────────────┐
+                    │  graphite_pristine.vasp     │
+                    │  (Initial Structure)         │
+                    └──────────────┬───────────────┘
+                                   │
+                                   ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 0: Relax Pristine Structure                       ║
+         ║  Script: 00_relax_pristine.sh                          ║
+         ║  Task: u_double_relax_static                           ║
+         ║  Time: ~1-2 hours                                       ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+                                            ▼
+                    ┌─────────────────────────────┐
+                    │  CONTCAR (Relaxed)          │
+                    │  Reference Structure         │
+                    └──────────────┬───────────────┘
+                                   │
+                                   ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 1: Generate Doped Structures                      ║
+         ║  Script: 01_generate_doped_structures.py               ║
+         ║  Creates: Substitutional + Interstitial structures     ║
+         ║  Time: <1 minute                                        ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+                    ┌───────────────────────┴───────────────────────┐
+                    │                                               │
+                    ▼                                               ▼
+        ┌────────────────────┐                          ┌────────────────────┐
+        │ Substitutional     │                          │ Interstitial       │
+        │ Doping Structures  │                          │ Doping Structures  │
+        │                    │                          │                    │
+        │ graphite_sub_*.vasp│                          │ graphite_int_*.vasp│
+        └─────────┬──────────┘                          └─────────┬──────────┘
+                  │                                               │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+                                          ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 2: Batch Submit Calculations                      ║
+         ║  Script: 02_batch_submit_jobs.sh                       ║
+         ║  Submits: All structures via mpjob                     ║
+         ║  Time: 30 min - 4 hours per structure                  ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+              ┌─────────────────────────────┼─────────────────────────────┐
+              │                             │                             │
+              ▼                             ▼                             ▼
+    ┌──────────────────┐        ┌──────────────────┐        ┌──────────────────┐
+    │ Job 1:           │        │ Job 2:           │  ...   │ Job N:           │
+    │ graphite_sub_B   │        │ graphite_int_La  │        │ graphite_sub_Mg  │
+    │                  │        │                  │        │                  │
+    │ INCAR, POSCAR    │        │ INCAR, POSCAR    │        │ INCAR, POSCAR    │
+    │ KPOINTS, POTCAR  │        │ KPOINTS, POTCAR  │        │ KPOINTS, POTCAR  │
+    └─────────┬────────┘        └─────────┬────────┘        └─────────┬────────┘
+              │                           │                           │
+              │      Monitor with:        │                           │
+              │   02b_monitor_jobs.sh     │                           │
+              │                           │                           │
+              ▼                           ▼                           ▼
+    ┌──────────────────┐        ┌──────────────────┐        ┌──────────────────┐
+    │ CONTCAR          │        │ CONTCAR          │        │ CONTCAR          │
+    │ OUTCAR           │        │ OUTCAR           │        │ OUTCAR           │
+    │ vasprun.xml      │        │ vasprun.xml      │        │ vasprun.xml      │
+    └─────────┬────────┘        └─────────┬────────┘        └─────────┬────────┘
+              │                           │                           │
+              └─────────────────────────────┼───────────────────────────┘
+                                          │
+                                          ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 3: Extract and Analyze Results                    ║
+         ║  Script: 03_extract_results.py                         ║
+         ║  Extracts: Lattice, spacing, energy                    ║
+         ║  Time: 1-5 minutes                                      ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+                    ┌───────────────────────┴───────────────────────┐
+                    │                                               │
+                    ▼                                               ▼
+        ┌────────────────────┐                          ┌────────────────────┐
+        │ results_summary.csv│                          │ summary_report.txt │
+        │ (Spreadsheet)      │                          │ (Human-readable)   │
+        └────────────────────┘                          └────────────────────┘
+                    │                                               │
+                    └───────────────────────┬───────────────────────┘
+                                            │
+                                            ▼
+                              ┌──────────────────────┐
+                              │  ANALYSIS & PLOTTING  │
+                              │                      │
+                              │ • Interlayer spacing │
+                              │ • Lattice parameters │
+                              │ • Formation energies │
+                              │ • Doping effects     │
+                              └──────────────────────┘
+
+================================================================================
+                              KEY OUTPUTS
+================================================================================
+
+├── 00_initial_structure/
+│   └── CONTCAR                        ← Relaxed pristine structure
+
+├── 01_structure_generation/
+│   └── doped_structures/
+│       ├── *.vasp                     ← All doped structures
+│       └── structure_metadata.json    ← Structure information
+
+├── 02_calculations/
+│   ├── */CONTCAR                      ← Relaxed doped structures
+│   ├── */OUTCAR                       ← Calculation output
+│   └── */vasprun.xml                  ← Detailed results
+
+└── 03_analysis/
+    ├── results_summary.csv            ← Main results table
+    ├── results_complete.json          ← Complete data
+    └── summary_report.txt             ← Statistical summary
+
+================================================================================
+                         EXTRACTED PROPERTIES
+================================================================================
+
+For each doped structure:
+  ✓ Lattice parameters (a, b, c, α, β, γ)
+  ✓ Unit cell volume
+  ✓ Interlayer spacing (average, min, max)
+  ✓ Number of layers
+  ✓ Total energy
+  ✓ Energy per atom
+  ✓ Formation energy (relative to pristine)
+  ✓ Composition and doping information
+
+================================================================================
+                         ANALYSIS CAPABILITIES
+================================================================================
+
+1. Compare interlayer spacing across dopants
+2. Identify dopants that expand/contract graphite
+3. Rank by formation energy (stability)
+4. Separate substitutional vs interstitial effects
+5. Correlation analysis (spacing vs. dopant properties)
+6. Statistical analysis by element, doping type, etc.
+
+================================================================================

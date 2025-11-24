@@ -1,0 +1,18 @@
+# Python Requirements for High-Throughput Graphite Doping Workflow
+
+# Core dependency
+pymatgen>=2023.0.0
+
+# Data analysis
+pandas>=1.5.0
+numpy>=1.23.0
+
+# Optional: For advanced plotting and analysis
+matplotlib>=3.6.0
+seaborn>=0.12.0
+scipy>=1.10.0
+
+# Installation:
+# pip install -r requirements.txt
+# or
+# conda install --file requirements.txt -c conda-forge
