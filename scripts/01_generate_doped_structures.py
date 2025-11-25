@@ -46,25 +46,11 @@ class GraphiteDopingGenerator:
         """
         generated_files = []
 
-        # If no site indices specified, get only the central C site
+        # If no site indices specified, use site 3 (C3 at ~0.66667, 0.33333, 0.5)
         # This ensures one and only one doped atom for lower concentration
         if site_indices is None:
-            c_sites = [(i, site) for i, site in enumerate(self.structure)
-                      if site.species_string in ['C']]
-
-            # Find the center of the structure
-            center = np.mean([site.frac_coords for _, site in c_sites], axis=0)
-
-            # Find the C atom closest to the center
-            min_dist = float('inf')
-            central_site_idx = None
-            for idx, site in c_sites:
-                dist = np.linalg.norm(site.frac_coords - center)
-                if dist < min_dist:
-                    min_dist = dist
-                    central_site_idx = idx
-
-            site_indices = [central_site_idx] if central_site_idx is not None else []
+            # For graphite unit cell, C3 (index 3) is at (0.66667, 0.33333, 0.5)
+            site_indices = [3]
 
         print(f"Using {len(site_indices)} C site(s) for substitutional doping")
 
@@ -128,8 +114,8 @@ class GraphiteDopingGenerator:
                 ([0.166667, 0.333333, 0.25], 'bridge'),
                 ([0.5, 0.5, 0.25], 'bridge_alt'),
 
-                # In-ring site (inside carbon hexagon, in-plane)
-                ([0.333333, 0.666667, 0.0], 'in_ring'),
+                # In-ring site (center of 6-carbon ring at z=0.5 plane)
+                ([0.333333, 0.666667, 0.5], 'in_ring'),
             ]
 
         print(f"Using {len(interstitial_positions)} interstitial positions")
@@ -227,27 +213,47 @@ class GraphiteDopingGenerator:
                     print(f"Generated: {filename}")
 
         elif doping_type == 'interstitial':
-            # Use first interstitial position scaled to supercell
+            # Generate all 5 interstitial positions for each supercell
+            # Scale positions to place interstitials at equivalent sites within supercell
+            nx, ny, nz = supercell_matrix[0][0], supercell_matrix[1][1], supercell_matrix[2][2]
+            interstitial_positions = [
+                # Hollow site (between layers, centered in hexagon)
+                ([0.0, 0.0, 0.25], 'hollow'),
+
+                # Atom-above site (between layers, above/below an atom)
+                ([0.333333 / nx, 0.666667 / ny, 0.25], 'above_atom'),
+
+                # Bridge sites (between layers, on edge of hexagon)
+                ([0.166667 / nx, 0.333333 / ny, 0.25], 'bridge'),
+                ([0.5 / nx, 0.5 / ny, 0.25], 'bridge_alt'),
+
+                # In-ring site (center of 6-carbon ring at z=0.5 plane)
+                ([0.333333 / nx, 0.666667 / ny, 0.5], 'in_ring'),
+            ]
+
             for dopant in dopant_elements:
-                doped_structure = supercell.copy()
-                # Add interstitial at a typical position
-                doped_structure.append(dopant, [0.0, 0.0, 0.25], coords_are_cartesian=False)
+                for position, pos_label in interstitial_positions:
+                    doped_structure = supercell.copy()
+                    # Add interstitial at specified position
+                    doped_structure.append(dopant, position, coords_are_cartesian=False)
 
-                filename = f"graphite_int_{dopant}_{supercell_label}.vasp"
-                filepath = self.output_dir / filename
+                    filename = f"graphite_int_{dopant}_{pos_label}_{supercell_label}.vasp"
+                    filepath = self.output_dir / filename
 
-                doped_structure.to(filename=str(filepath), fmt='poscar')
-                generated_files.append(str(filepath))
+                    doped_structure.to(filename=str(filepath), fmt='poscar')
+                    generated_files.append(str(filepath))
 
-                self.metadata.append({
-                    'filename': filename,
-                    'doping_type': 'interstitial',
-                    'dopant': dopant,
-                    'supercell': supercell_label,
-                    'composition': doped_structure.composition.formula,
-                })
+                    self.metadata.append({
+                        'filename': filename,
+                        'doping_type': 'interstitial',
+                        'dopant': dopant,
+                        'supercell': supercell_label,
+                        'position': position,
+                        'position_label': pos_label,
+                        'composition': doped_structure.composition.formula,
+                    })
 
-                print(f"Generated: {filename}")
+                    print(f"Generated: {filename}")
 
         return generated_files
 
