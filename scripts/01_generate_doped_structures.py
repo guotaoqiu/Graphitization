@@ -46,12 +46,27 @@ class GraphiteDopingGenerator:
         """
         generated_files = []
 
-        # If no site indices specified, get all C sites
+        # If no site indices specified, get only the central C site
+        # This ensures one and only one doped atom for lower concentration
         if site_indices is None:
-            site_indices = [i for i, site in enumerate(self.structure)
-                          if site.species_string in ['C']]
+            c_sites = [(i, site) for i, site in enumerate(self.structure)
+                      if site.species_string in ['C']]
 
-        print(f"Found {len(site_indices)} C sites for substitutional doping")
+            # Find the center of the structure
+            center = np.mean([site.frac_coords for _, site in c_sites], axis=0)
+
+            # Find the C atom closest to the center
+            min_dist = float('inf')
+            central_site_idx = None
+            for idx, site in c_sites:
+                dist = np.linalg.norm(site.frac_coords - center)
+                if dist < min_dist:
+                    min_dist = dist
+                    central_site_idx = idx
+
+            site_indices = [central_site_idx] if central_site_idx is not None else []
+
+        print(f"Using {len(site_indices)} C site(s) for substitutional doping")
 
         for dopant in dopant_elements:
             for site_idx in site_indices:
@@ -99,25 +114,22 @@ class GraphiteDopingGenerator:
         generated_files = []
 
         # Default interstitial positions in graphite
-        # Includes: hollow sites, atom-above sites, bridge sites, and in-ring sites
+        # One position per site type (duplicates removed due to periodic boundary along c)
+        # Each structure contains one and only one doped atom
         if interstitial_positions is None:
             interstitial_positions = [
-                # Hollow sites (between layers, centered in hexagon)
-                ([0.0, 0.0, 0.25], 'hollow_z025'),
-                ([0.0, 0.0, 0.75], 'hollow_z075'),
+                # Hollow site (between layers, centered in hexagon)
+                ([0.0, 0.0, 0.25], 'hollow'),
 
-                # Atom-above sites (between layers, above/below an atom)
-                ([0.333333, 0.666667, 0.25], 'above_atom_z025'),
-                ([0.666667, 0.333333, 0.75], 'above_atom_z075'),
+                # Atom-above site (between layers, above/below an atom)
+                ([0.333333, 0.666667, 0.25], 'above_atom'),
 
                 # Bridge sites (between layers, on edge of hexagon)
-                ([0.166667, 0.333333, 0.25], 'bridge_z025'),
-                ([0.5, 0.5, 0.25], 'bridge_alt_z025'),
-                ([0.833333, 0.166667, 0.75], 'bridge_z075'),
+                ([0.166667, 0.333333, 0.25], 'bridge'),
+                ([0.5, 0.5, 0.25], 'bridge_alt'),
 
-                # In-ring sites (inside carbon hexagon, in-plane)
-                ([0.333333, 0.666667, 0.0], 'in_ring_layer1'),
-                ([0.666667, 0.333333, 0.5], 'in_ring_layer2'),
+                # In-ring site (inside carbon hexagon, in-plane)
+                ([0.333333, 0.666667, 0.0], 'in_ring'),
             ]
 
         print(f"Using {len(interstitial_positions)} interstitial positions")
@@ -175,17 +187,29 @@ class GraphiteDopingGenerator:
         supercell_label = "x".join([str(m[i]) for i, m in enumerate(supercell_matrix)])
 
         if doping_type == 'substitutional':
-            # Get C sites
-            c_sites = [i for i, site in enumerate(supercell)
+            # Get C sites and find the central one
+            c_sites = [(i, site) for i, site in enumerate(supercell)
                       if site.species_string == 'C']
 
-            for dopant in dopant_elements:
-                # Substitute first num_dopants C sites
-                for site_combo_idx in range(min(num_dopants, len(c_sites))):
-                    doped_structure = supercell.copy()
-                    doped_structure.replace(c_sites[site_combo_idx], dopant)
+            # Find the center of the supercell
+            center = np.mean([site.frac_coords for _, site in c_sites], axis=0)
 
-                    filename = f"graphite_sub_{dopant}_{supercell_label}_n{site_combo_idx+1}.vasp"
+            # Find the C atom closest to the center
+            min_dist = float('inf')
+            central_site_idx = None
+            for idx, site in c_sites:
+                dist = np.linalg.norm(site.frac_coords - center)
+                if dist < min_dist:
+                    min_dist = dist
+                    central_site_idx = idx
+
+            for dopant in dopant_elements:
+                # Substitute only the central C site (one and only one doped atom)
+                if central_site_idx is not None:
+                    doped_structure = supercell.copy()
+                    doped_structure.replace(central_site_idx, dopant)
+
+                    filename = f"graphite_sub_{dopant}_{supercell_label}.vasp"
                     filepath = self.output_dir / filename
 
                     doped_structure.to(filename=str(filepath), fmt='poscar')
