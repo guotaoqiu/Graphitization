@@ -2,30 +2,30 @@
               HIGH-THROUGHPUT GRAPHITE DOPING WORKFLOW
 ================================================================================
 
-                    ┌─────────────────────────────┐
-                    │  graphite_pristine.vasp     │
-                    │  (Initial Structure)         │
+                    ┌──────────────────────────────┐
+                    │   graphite_pristine.vasp     │
+                    │   (Initial Structure)        │
                     └──────────────┬───────────────┘
                                    │
                                    ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 0: Relax Pristine Structure                       ║
-         ║  Script: 00_relax_pristine.sh                          ║
-         ║  Task: u_double_relax_static                           ║
+         ║  Script: 00_relax_pristine.sh                           ║
+         ║  Task: u_double_relax_static                            ║
          ║  Time: ~1-2 hours                                       ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
                                             ▼
-                    ┌─────────────────────────────┐
-                    │  CONTCAR (Relaxed)          │
+                    ┌──────────────────────────────┐
+                    │  CONTCAR (Relaxed)           │
                     │  Reference Structure         │
                     └──────────────┬───────────────┘
                                    │
                                    ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 1: Generate Doped Structures                      ║
-         ║  Script: 01_generate_doped_structures.py               ║
-         ║  Creates: Substitutional + Interstitial structures     ║
+         ║  Script: 01_generate_doped_structures.py                ║
+         ║  Creates: Substitutional + Interstitial structures      ║
          ║  Time: <1 minute                                        ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
@@ -44,9 +44,9 @@
                                           ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 2: Batch Submit Calculations                      ║
-         ║  Script: 02_batch_submit_jobs.sh                       ║
-         ║  Submits: All structures via mpjob                     ║
-         ║  Time: 30 min - 4 hours per structure                  ║
+         ║  Script: 02_batch_submit_jobs.sh                        ║
+         ║  Submits: All structures via mpjob                      ║
+         ║  Time: 30 min - 4 hours per structure                   ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
               ┌─────────────────────────────┼─────────────────────────────┐
@@ -75,8 +75,8 @@
                                           ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 3: Extract and Analyze Results                    ║
-         ║  Script: 03_extract_results.py                         ║
-         ║  Extracts: Lattice, spacing, energy                    ║
+         ║  Script: 03_extract_results.py                          ║
+         ║  Extracts: Lattice, spacing, energy                     ║
          ║  Time: 1-5 minutes                                      ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
@@ -93,14 +93,14 @@
                                           ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 4 (Optional): Advanced Analysis                   ║
-         ║  Script: 04_example_analysis.py                        ║
-         ║  Generates: Statistical analysis and plots             ║
+         ║  Script: 04_example_analysis.py                         ║
+         ║  Generates: Statistical analysis and plots              ║
          ║  Time: 1-3 minutes                                      ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
                                             ▼
                               ┌──────────────────────┐
-                              │  ANALYSIS & PLOTTING  │
+                              │  ANALYSIS & PLOTTING │
                               │                      │
                               │ • Interlayer spacing │
                               │ • Lattice parameters │
@@ -111,22 +111,22 @@
                                          ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 5 (Optional): Export to JSON                      ║
-         ║  Script: 05_export_to_json.py                          ║
-         ║  Creates: MongoDB-compatible JSON export               ║
+         ║  Script: 05_export_to_json.py                           ║
+         ║  Creates: MongoDB-compatible JSON export                ║
          ║  Time: 2-5 minutes                                      ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
                                             ▼
                     ┌─────────────────────────────┐
                     │ results_database.json       │
-                    │ (MongoDB-ready format)       │
-                    └──────────────┬───────────────┘
+                    │ (MongoDB-ready format)      │
+                    └──────────────┬──────────────┘
                                    │
                                    ▼
          ╔═════════════════════════════════════════════════════════╗
          ║  STEP 6 (Optional): Upload to MongoDB                   ║
-         ║  Script: 06_upload_to_mongodb.py                       ║
-         ║  Uploads: Results to database                          ║
+         ║  Script: 06_upload_to_mongodb.py                        ║
+         ║  Uploads: Results to database                           ║
          ║  Time: 1-10 minutes                                     ║
          ╚══════════════════════════════════╦══════════════════════╝
                                             │
