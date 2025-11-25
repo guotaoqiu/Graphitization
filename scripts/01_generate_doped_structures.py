@@ -90,7 +90,7 @@ class GraphiteDopingGenerator:
 
         Args:
             dopant_elements: List of dopant elements (e.g., ['B', 'La', 'Mg'])
-            interstitial_positions: List of fractional coordinates for interstitial sites
+            interstitial_positions: List of tuples (position, label) for interstitial sites
                                   If None, will use common interstitial positions
 
         Returns:
@@ -99,19 +99,31 @@ class GraphiteDopingGenerator:
         generated_files = []
 
         # Default interstitial positions in graphite
-        # Between layers at hollow sites
+        # Includes: hollow sites, atom-above sites, bridge sites, and in-ring sites
         if interstitial_positions is None:
             interstitial_positions = [
-                [0.0, 0.0, 0.25],      # Between layer 1 and 2, hollow site
-                [0.333333, 0.666667, 0.25],  # Between layer 1 and 2, over atom site
-                [0.0, 0.0, 0.75],      # Between layer 2 and 1, hollow site
-                [0.666667, 0.333333, 0.75],  # Between layer 2 and 1, over atom site
+                # Hollow sites (between layers, centered in hexagon)
+                ([0.0, 0.0, 0.25], 'hollow_z025'),
+                ([0.0, 0.0, 0.75], 'hollow_z075'),
+
+                # Atom-above sites (between layers, above/below an atom)
+                ([0.333333, 0.666667, 0.25], 'above_atom_z025'),
+                ([0.666667, 0.333333, 0.75], 'above_atom_z075'),
+
+                # Bridge sites (between layers, on edge of hexagon)
+                ([0.166667, 0.333333, 0.25], 'bridge_z025'),
+                ([0.5, 0.5, 0.25], 'bridge_alt_z025'),
+                ([0.833333, 0.166667, 0.75], 'bridge_z075'),
+
+                # In-ring sites (inside carbon hexagon, in-plane)
+                ([0.333333, 0.666667, 0.0], 'in_ring_layer1'),
+                ([0.666667, 0.333333, 0.5], 'in_ring_layer2'),
             ]
 
         print(f"Using {len(interstitial_positions)} interstitial positions")
 
         for dopant in dopant_elements:
-            for idx, position in enumerate(interstitial_positions):
+            for position, pos_label in interstitial_positions:
                 # Create a copy of the structure
                 doped_structure = self.structure.copy()
 
@@ -119,7 +131,6 @@ class GraphiteDopingGenerator:
                 doped_structure.append(dopant, position, coords_are_cartesian=False)
 
                 # Generate filename
-                pos_label = f"pos{idx}"
                 filename = f"graphite_int_{dopant}_{pos_label}.vasp"
                 filepath = self.output_dir / filename
 
@@ -133,6 +144,7 @@ class GraphiteDopingGenerator:
                     'doping_type': 'interstitial',
                     'dopant': dopant,
                     'position': position,
+                    'position_label': pos_label,
                     'composition': doped_structure.composition.formula,
                 })
 
@@ -215,6 +227,47 @@ class GraphiteDopingGenerator:
 
         return generated_files
 
+    def generate_pure_supercells(self, supercell_sizes):
+        """
+        Generate pure graphite supercells for formation energy calculations
+
+        Args:
+            supercell_sizes: List of supercell sizes, e.g., [(2,2,1), (3,3,1), ...]
+
+        Returns:
+            List of generated structure file paths
+        """
+        generated_files = []
+
+        for size in supercell_sizes:
+            nx, ny, nz = size
+            supercell_matrix = [[nx, 0, 0], [0, ny, 0], [0, 0, nz]]
+
+            # Create supercell
+            supercell = self.structure.copy()
+            supercell.make_supercell(supercell_matrix)
+
+            supercell_label = f"{nx}x{ny}x{nz}"
+            filename = f"graphite_pure_{supercell_label}.vasp"
+            filepath = self.output_dir / filename
+
+            supercell.to(filename=str(filepath), fmt='poscar')
+            generated_files.append(str(filepath))
+
+            self.metadata.append({
+                'filename': filename,
+                'doping_type': 'pure',
+                'dopant': None,
+                'supercell': supercell_label,
+                'supercell_size': size,
+                'composition': supercell.composition.formula,
+                'num_atoms': len(supercell),
+            })
+
+            print(f"Generated: {filename}")
+
+        return generated_files
+
     def save_metadata(self, filename='structure_metadata.json'):
         """Save metadata for all generated structures"""
         metadata_path = self.output_dir / filename
@@ -239,45 +292,89 @@ def main():
     # Dopant elements to consider
     DOPANT_ELEMENTS = ['B', 'N', 'La', 'Mg', 'Al', 'Si', 'P', 'S']
 
+    # Supercell sizes for different concentrations
+    SUPERCELL_SIZES = [(2, 2, 1), (3, 3, 1), (4, 4, 1), (5, 5, 1), (6, 6, 1)]
+
     # Initialize generator
     generator = GraphiteDopingGenerator(PRISTINE_STRUCTURE, OUTPUT_DIR)
 
-    print("="*60)
+    print("="*80)
     print("Graphite Doping Structure Generator")
-    print("="*60)
+    print("="*80)
     print(f"Pristine structure: {PRISTINE_STRUCTURE}")
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"Dopants: {', '.join(DOPANT_ELEMENTS)}")
-    print("="*60)
+    print(f"Supercell sizes: {', '.join([f'{x}x{y}x{z}' for x,y,z in SUPERCELL_SIZES])}")
+    print("="*80)
+    print()
+
+    # Generate pure unit cell
+    print("Generating pure graphite (unit cell)...")
+    print("-"*80)
+    pure_structure = generator.structure.copy()
+    pure_filepath = generator.output_dir / "graphite_pure_1x1x1.vasp"
+    pure_structure.to(filename=str(pure_filepath), fmt='poscar')
+    generator.metadata.append({
+        'filename': 'graphite_pure_1x1x1.vasp',
+        'doping_type': 'pure',
+        'dopant': None,
+        'supercell': '1x1x1',
+        'composition': pure_structure.composition.formula,
+    })
+    print(f"Generated: graphite_pure_1x1x1.vasp")
+    print()
+
+    # Generate pure supercells
+    print("Generating pure graphite supercells...")
+    print("-"*80)
+    generator.generate_pure_supercells(SUPERCELL_SIZES)
     print()
 
     # Generate substitutional structures (unit cell)
     print("Generating substitutional structures (unit cell)...")
-    print("-"*60)
+    print("-"*80)
     generator.generate_substitutional_structures(DOPANT_ELEMENTS)
     print()
 
     # Generate interstitial structures (unit cell)
     print("Generating interstitial structures (unit cell)...")
-    print("-"*60)
+    print("-"*80)
     generator.generate_interstitial_structures(DOPANT_ELEMENTS)
     print()
 
-    # Generate supercell structures for lower concentrations (optional)
-    # Uncomment if you want to study lower doping concentrations
-    # print("Generating supercell structures (2x2x1)...")
-    # print("-"*60)
-    # supercell_matrix = [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
-    # generator.generate_supercell_structures(supercell_matrix, DOPANT_ELEMENTS[:3],
-    #                                        doping_type='substitutional')
-    # print()
+    # Generate supercell doped structures for different concentrations
+    print("Generating doped supercell structures...")
+    print("-"*80)
+    for size in SUPERCELL_SIZES:
+        nx, ny, nz = size
+        supercell_label = f"{nx}x{ny}x{nz}"
+        print(f"\nSupercell {supercell_label}:")
+        supercell_matrix = [[nx, 0, 0], [0, ny, 0], [0, 0, nz]]
+
+        # Substitutional doping
+        generator.generate_supercell_structures(
+            supercell_matrix, DOPANT_ELEMENTS,
+            doping_type='substitutional', num_dopants=1
+        )
+
+        # Interstitial doping
+        generator.generate_supercell_structures(
+            supercell_matrix, DOPANT_ELEMENTS,
+            doping_type='interstitial', num_dopants=1
+        )
+    print()
 
     # Save metadata
     generator.save_metadata()
 
-    print("="*60)
+    print("="*80)
     print(f"Total structures generated: {len(generator.metadata)}")
-    print("="*60)
+    print("="*80)
+    print("\nStructure breakdown:")
+    print(f"  Pure structures: {len([m for m in generator.metadata if m['doping_type'] == 'pure'])}")
+    print(f"  Substitutional: {len([m for m in generator.metadata if m['doping_type'] == 'substitutional'])}")
+    print(f"  Interstitial: {len([m for m in generator.metadata if m['doping_type'] == 'interstitial'])}")
+    print("="*80)
 
 
 if __name__ == "__main__":

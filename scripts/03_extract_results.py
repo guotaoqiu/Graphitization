@@ -14,6 +14,30 @@ from pymatgen.io.vasp.outputs import Vasprun, Outcar
 import warnings
 warnings.filterwarnings('ignore')
 
+# Chemical potential table for common elements (DFT calculated)
+CHEMICAL_POTENTIALS = {
+    'Cl': -1.84853666, 'Ir': -8.83843418, 'Tm': -4.475835423333334, 'Li': -1.9089228666666667,
+    'Hf': -9.95718903, 'Sb': -4.12900124, 'Mg': -1.60028005, 'Dy': -4.60678684, 'Ho': -4.58240887,
+    'Pa': -9.51466466, 'Cd': -0.92288976, 'As': -4.659118405, 'Ne': -0.02593678, 'Tc': -10.360638945,
+    'Np': -12.94777968125, 'Tb': -4.6343661, 'Sn': -4.009571855, 'Rb': -0.9805340725, 'Er': -4.56771881,
+    'Cs': -0.8954023720689656, 'In': -2.75168373, 'Hg': -0.303680365, 'K': -1.110398947,
+    'Na': -1.3225252934482759, 'Sr': -1.6894934533333332, 'Y': -6.466471113333333,
+    'P': -5.413302506666667, 'Ba': -1.91897494, 'Nd': -4.7681474325, 'Pt': -6.07113332,
+    'Mo': -10.84565011, 'Fe': -8.47002121, 'Zr': -8.54770063, 'Al': -3.74557583, 'Ga': -3.0280960225,
+    'Lu': -4.52095052, 'V': -9.08390607, 'Si': -5.42531803, 'Gd': -14.07612224, 'B': -6.679391770833334,
+    'Te': -3.1433058933333338, 'Pd': -5.17988181, 'Pb': -3.71264707, 'Ni': -5.78013668,
+    'Ar': -0.06880822, 'He': -0.00905951, 'H': -3.392726045, 'N': -8.336494925, 'C': -9.2286654925,
+    'La': -4.936007105, 'Cu': -4.09920667, 'Ge': -4.623027855, 'Ru': -9.27440254,
+    'Mn': -9.162015292068965, 'Th': -7.41385825, 'Pr': -4.780905755, 'U': -11.29141001,
+    'Ca': -2.00559988, 'Os': -11.22736743, 'Ta': -11.85777763, 'Co': -7.108317795, 'F': -1.9114789675,
+    'Ce': -5.933089155, 'Bi': -3.84048913, 'Se': -3.49591147765625, 'Pu': -14.26783833,
+    'Kr': -0.05671467, 'Eu': -10.2570018, 'I': -1.47336635, 'Sc': -6.332469105, 'Sm': -4.718586135,
+    'Ti': -7.895492016666666, 'O': -4.94668871125, 'Rh': -7.36430787, 'Nb': -10.10130504,
+    'Zn': -1.25974361, 'Re': -12.444527185, 'Au': -3.273882, 'Ac': -4.1211750075, 'Pm': -4.7505423225,
+    'Be': -3.739412865, 'Cr': -9.65304747, 'W': -12.95813023, 'S': -4.136449866875, 'Xe': -0.03617417,
+    'Yb': -1.5396082800000002, 'Tl': -2.3626431466666666, 'Ag': -2.8325560033333335, 'Br': -1.55302833
+}
+
 
 class GraphiteResultsAnalyzer:
     """Extract and analyze results from doped graphite calculations"""
@@ -212,23 +236,98 @@ class GraphiteResultsAnalyzer:
         print(f"Analysis complete: {len(self.results)} jobs processed")
         print("="*70)
 
-    def calculate_formation_energies(self, pristine_energy_per_atom):
+    def calculate_doping_concentration(self, result):
         """
-        Calculate formation energies relative to pristine graphite
+        Calculate doping concentration from structure composition
+
+        Returns:
+            Doping concentration as percentage of dopant atoms to total atoms
+        """
+        if result.get('doping_type') == 'pure':
+            return 0.0
+
+        if 'num_atoms' in result and 'dopant' in result and result['dopant'] is not None:
+            # Get structure composition
+            composition = result.get('formula', '')
+            if not composition:
+                return None
+
+            # Parse composition to count dopant atoms
+            # This is a simple parser - for production use pymatgen.Composition
+            dopant = result['dopant']
+            num_atoms = result['num_atoms']
+
+            # Count dopant atoms (assuming single dopant for now)
+            # For more complex cases, use pymatgen
+            dopant_count = 1  # Default for single substitution/interstitial
+
+            # Calculate concentration as percentage
+            concentration = (dopant_count / num_atoms) * 100.0
+            return concentration
+
+        return None
+
+    def calculate_formation_energies(self, pure_energies_dict):
+        """
+        Calculate formation energies with proper chemical potentials
 
         Args:
-            pristine_energy_per_atom: Energy per atom of pristine graphite
+            pure_energies_dict: Dictionary mapping supercell size to pure energy
+                               e.g., {'1x1x1': -18.45, '2x2x1': -147.6, ...}
+
+        Formation energy formulas:
+        - Substitutional: E_f = E_doped - E_pure - n*E_C + n*E_dopant
+        - Interstitial: E_f = E_doped - E_pure - n*E_dopant
         """
-        print("\nCalculating formation energies...")
+        print("\nCalculating formation energies with chemical potentials...")
+
+        E_C = CHEMICAL_POTENTIALS.get('C', -9.2286654925)
 
         for result in self.results:
-            if result.get('energy_per_atom') is not None:
-                # Simple formation energy (difference from pristine)
-                # This is approximate - for more accuracy, need to account for
-                # chemical potentials of dopant elements
-                result['formation_energy_per_atom'] = (
-                    result['energy_per_atom'] - pristine_energy_per_atom
-                )
+            if result.get('doping_type') == 'pure':
+                result['formation_energy'] = 0.0
+                result['formation_energy_per_atom'] = 0.0
+                continue
+
+            if result.get('final_energy') is None:
+                continue
+
+            # Get corresponding pure energy
+            supercell = result.get('supercell', '1x1x1')
+            E_pure = pure_energies_dict.get(supercell)
+
+            if E_pure is None:
+                print(f"  Warning: No pure energy for supercell {supercell}")
+                continue
+
+            E_doped = result['final_energy']
+            dopant = result.get('dopant')
+            doping_type = result.get('doping_type')
+
+            if dopant is None or dopant not in CHEMICAL_POTENTIALS:
+                print(f"  Warning: No chemical potential for dopant {dopant}")
+                continue
+
+            E_dopant = CHEMICAL_POTENTIALS[dopant]
+            n_dopant = 1  # Assuming single dopant per structure
+
+            # Calculate formation energy based on doping type
+            if doping_type == 'substitutional':
+                # E_f = E_doped - E_pure - n*E_C + n*E_dopant
+                E_f = E_doped - E_pure - n_dopant * E_C + n_dopant * E_dopant
+            elif doping_type == 'interstitial':
+                # E_f = E_doped - E_pure - n*E_dopant
+                E_f = E_doped - E_pure - n_dopant * E_dopant
+            else:
+                E_f = None
+
+            result['formation_energy'] = E_f
+            if result.get('num_atoms'):
+                result['formation_energy_per_atom'] = E_f / result['num_atoms']
+
+            # Calculate doping concentration
+            concentration = self.calculate_doping_concentration(result)
+            result['doping_concentration_percent'] = concentration
 
     def export_results(self, output_dir='../03_analysis'):
         """Export results to various formats"""
@@ -342,10 +441,24 @@ def main():
     # Analyze all jobs
     analyzer.analyze_all_jobs()
 
-    # Calculate formation energies (optional - need pristine energy)
-    # To use this, first run pristine graphite calculation and get energy
-    # PRISTINE_ENERGY_PER_ATOM = -9.XXX  # Replace with actual value
-    # analyzer.calculate_formation_energies(PRISTINE_ENERGY_PER_ATOM)
+    # Extract pure structure energies for formation energy calculations
+    print("\nExtracting pure structure energies...")
+    pure_energies = {}
+    for result in analyzer.results:
+        if result.get('doping_type') == 'pure' and result.get('status') == 'completed':
+            supercell = result.get('supercell', '1x1x1')
+            energy = result.get('final_energy')
+            if energy is not None:
+                pure_energies[supercell] = energy
+                print(f"  {supercell}: {energy:.6f} eV")
+
+    if pure_energies:
+        print(f"\nFound {len(pure_energies)} pure structure energies")
+        # Calculate formation energies
+        analyzer.calculate_formation_energies(pure_energies)
+    else:
+        print("\nWarning: No pure structure energies found. Skipping formation energy calculation.")
+        print("Make sure to calculate pure graphite structures first!")
 
     # Export results
     df = analyzer.export_results(OUTPUT_DIR)
@@ -357,6 +470,10 @@ def main():
     print(f"Completed: {len(df[df['status'] == 'completed'])}")
     print(f"Failed: {len(df[df['status'] == 'failed'])}")
     print(f"Running: {len(df[df['status'] == 'running'])}")
+    if 'doping_concentration_percent' in df.columns:
+        completed = df[df['status'] == 'completed']
+        if len(completed) > 0:
+            print(f"\nDoping concentrations: {completed['doping_concentration_percent'].min():.2f}% to {completed['doping_concentration_percent'].max():.2f}%")
 
 
 if __name__ == "__main__":
