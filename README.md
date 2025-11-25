@@ -61,6 +61,18 @@ cat summary_report.txt
 less results_summary.csv
 ```
 
+### 4. (Optional) Advanced Analysis & Data Export
+```bash
+# Advanced analysis with plots
+python3 04_example_analysis.py
+
+# Export to structured JSON
+python3 05_export_to_json.py
+
+# Upload to MongoDB (configure connection first)
+python3 06_upload_to_mongodb.py
+```
+
 See [QUICK_START.md](QUICK_START.md) for detailed quick start guide.
 
 ---
@@ -96,7 +108,9 @@ Graphitization/
     ├── 02_batch_submit_jobs.sh              # Step 2: Batch submission
     ├── 02b_monitor_jobs.sh                  # Monitor job status
     ├── 03_extract_results.py                # Step 3: Result extraction
-    └── 04_example_analysis.py               # Step 4: Advanced analysis
+    ├── 04_example_analysis.py               # Step 4: Advanced analysis
+    ├── 05_export_to_json.py                 # Step 5: Export to JSON
+    └── 06_upload_to_mongodb.py              # Step 6: Upload to MongoDB
 ```
 
 ---
@@ -109,6 +123,8 @@ Pristine Structure → Relax → Generate Doped Structures → Submit Calculatio
                                                           Monitor Jobs
                                                                  ↓
            Analysis & Plots ← Extract Results ← Completed Calculations
+                    ↓
+           Export to JSON → Upload to MongoDB (Optional)
 ```
 
 ---
@@ -148,8 +164,9 @@ For each doped structure, the workflow extracts:
 
 Results are exported in multiple formats:
 - **CSV**: `results_summary.csv` (Excel-compatible)
-- **JSON**: `results_complete.json` (machine-readable)
-- **TXT**: `summary_report.txt` (human-readable)
+- **JSON**: `results_complete.json` (complete analysis data)
+- **TXT**: `summary_report.txt` (human-readable summary)
+- **Database JSON**: `results_database.json` (MongoDB-ready format)
 
 ---
 
@@ -163,6 +180,10 @@ The included analysis scripts can:
 ✓ Compare substitutional vs. interstitial effects
 ✓ Generate publication-quality plots
 ✓ Export key findings in structured format
+✓ Export data to MongoDB-compatible JSON format
+✓ Upload results to MongoDB database for advanced querying
+✓ Statistical analysis and correlation studies
+✓ Automated report generation
 
 ---
 
@@ -175,6 +196,10 @@ The included analysis scripts can:
 - **pandas** (for data analysis)
 - **numpy** (for numerical operations)
 - Optional: **matplotlib** (for plotting)
+- Optional: **scipy** (for statistical analysis)
+- Optional: **scikit-learn** (for advanced analysis)
+- Optional: **pymongo** (for MongoDB database upload)
+- Optional: **tqdm** (for progress bars)
 
 ### Hardware
 - Access to HPC cluster with VASP
@@ -268,6 +293,6 @@ For questions or issues:
 
 ---
 
-**Version**: 1.0
-**Last Updated**: 2024-11-24
+**Version**: 1.1
+**Last Updated**: 2025-11-25
 **Status**: Production Ready ✅
