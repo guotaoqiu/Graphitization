@@ -86,9 +86,17 @@
         ┌────────────────────┐                          ┌────────────────────┐
         │ results_summary.csv│                          │ summary_report.txt │
         │ (Spreadsheet)      │                          │ (Human-readable)   │
-        └────────────────────┘                          └────────────────────┘
-                    │                                               │
-                    └───────────────────────┬───────────────────────┘
+        └─────────┬──────────┘                          └─────────┬──────────┘
+                  │                                               │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+                                          ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 4 (Optional): Advanced Analysis                   ║
+         ║  Script: 04_example_analysis.py                        ║
+         ║  Generates: Statistical analysis and plots             ║
+         ║  Time: 1-3 minutes                                      ║
+         ╚══════════════════════════════════╦══════════════════════╝
                                             │
                                             ▼
                               ┌──────────────────────┐
@@ -97,7 +105,38 @@
                               │ • Interlayer spacing │
                               │ • Lattice parameters │
                               │ • Formation energies │
-                              │ • Doping effects     │
+                              │ • Correlation plots  │
+                              └──────────┬───────────┘
+                                         │
+                                         ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 5 (Optional): Export to JSON                      ║
+         ║  Script: 05_export_to_json.py                          ║
+         ║  Creates: MongoDB-compatible JSON export               ║
+         ║  Time: 2-5 minutes                                      ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+                                            ▼
+                    ┌─────────────────────────────┐
+                    │ results_database.json       │
+                    │ (MongoDB-ready format)       │
+                    └──────────────┬───────────────┘
+                                   │
+                                   ▼
+         ╔═════════════════════════════════════════════════════════╗
+         ║  STEP 6 (Optional): Upload to MongoDB                   ║
+         ║  Script: 06_upload_to_mongodb.py                       ║
+         ║  Uploads: Results to database                          ║
+         ║  Time: 1-10 minutes                                     ║
+         ╚══════════════════════════════════╦══════════════════════╝
+                                            │
+                                            ▼
+                              ┌──────────────────────┐
+                              │  MongoDB Database    │
+                              │                      │
+                              │ • Advanced queries   │
+                              │ • Data aggregation   │
+                              │ • Long-term storage  │
                               └──────────────────────┘
 
 ================================================================================
@@ -120,7 +159,12 @@
 └── 03_analysis/
     ├── results_summary.csv            ← Main results table
     ├── results_complete.json          ← Complete data
-    └── summary_report.txt             ← Statistical summary
+    ├── summary_report.txt             ← Statistical summary
+    ├── results_database.json          ← MongoDB-ready export
+    └── plots/                         ← Analysis plots (if matplotlib available)
+        ├── interlayer_spacing_*.png
+        ├── formation_energy_*.png
+        └── *.png
 
 ================================================================================
                          EXTRACTED PROPERTIES
@@ -146,5 +190,33 @@ For each doped structure:
 4. Separate substitutional vs interstitial effects
 5. Correlation analysis (spacing vs. dopant properties)
 6. Statistical analysis by element, doping type, etc.
+7. Generate publication-quality plots and figures
+8. Export to MongoDB-compatible JSON format
+9. Upload to database for advanced queries
+10. Aggregate and filter data using MongoDB queries
+
+================================================================================
+
+                         OPTIONAL ADVANCED FEATURES
+================================================================================
+
+STEP 4: Advanced Analysis (04_example_analysis.py)
+  ✓ Statistical analysis with scipy
+  ✓ Publication-quality matplotlib plots
+  ✓ Correlation and regression analysis
+  ✓ Custom analysis functions
+
+STEP 5: JSON Export (05_export_to_json.py)
+  ✓ Structured data export
+  ✓ Symmetry analysis integration
+  ✓ Composition enrichment
+  ✓ Database-ready format
+
+STEP 6: MongoDB Upload (06_upload_to_mongodb.py)
+  ✓ Batch upload with progress tracking
+  ✓ Automatic ID assignment
+  ✓ Duplicate handling
+  ✓ Upload verification
+  ✓ Advanced querying capabilities
 
 ================================================================================

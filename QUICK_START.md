@@ -59,6 +59,22 @@ cat summary_report.txt
 less results_summary.csv
 ```
 
+### 6. (Optional) Advanced Analysis
+```bash
+cd ../scripts
+python3 04_example_analysis.py
+```
+View generated plots in `../03_analysis/plots/`
+
+### 7. (Optional) Export & Database Upload
+```bash
+# Export to MongoDB-compatible JSON
+python3 05_export_to_json.py
+
+# Upload to MongoDB (configure connection first)
+python3 06_upload_to_mongodb.py
+```
+
 ## Typical Timeline
 - **Day 1 Morning:** Run pristine relaxation (Step 1)
 - **Day 1 Afternoon:** Generate structures & submit calculations (Steps 2-3)
@@ -69,6 +85,9 @@ less results_summary.csv
 - **Reference:** `00_initial_structure/CONTCAR` (relaxed structure)
 - **Structures:** `01_structure_generation/doped_structures/*.vasp`
 - **Results:** `03_analysis/results_summary.csv`
+- **Complete Data:** `03_analysis/results_complete.json`
+- **Database Export:** `03_analysis/results_database.json`
+- **Plots:** `03_analysis/plots/*.png` (if matplotlib available)
 
 ## Common Commands
 
@@ -105,6 +124,31 @@ Edit `scripts/02_batch_submit_jobs.sh`:
 TASK_TYPE="u_relax"     # or double_relax_static, relax_static, etc.
 NCORES=64               # adjust based on your cluster
 PARTITION="cu"          # your cluster partition
+```
+
+## Advanced Features
+
+### Generate Analysis Plots
+```bash
+cd scripts
+python3 04_example_analysis.py
+```
+Generates:
+- Interlayer spacing comparison plots
+- Formation energy rankings
+- Lattice parameter distributions
+- Correlation analyses
+
+### Export to Database
+```bash
+# Step 1: Export to JSON
+python3 05_export_to_json.py
+
+# Step 2: Configure MongoDB connection in 06_upload_to_mongodb.py
+# Edit MONGO_URI, DATABASE_NAME, COLLECTION_NAME
+
+# Step 3: Upload
+python3 06_upload_to_mongodb.py
 ```
 
 ## Troubleshooting

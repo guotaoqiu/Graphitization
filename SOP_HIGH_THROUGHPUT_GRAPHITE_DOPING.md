@@ -48,7 +48,10 @@ Graphitization/
     ├── 01_generate_doped_structures.py
     ├── 02_batch_submit_jobs.sh
     ├── 02b_monitor_jobs.sh
-    └── 03_extract_results.py
+    ├── 03_extract_results.py
+    ├── 04_example_analysis.py
+    ├── 05_export_to_json.py
+    └── 06_upload_to_mongodb.py
 ```
 
 ---
@@ -256,6 +259,133 @@ python3
 
 ---
 
+### Step 4: Advanced Analysis (Optional)
+
+**Objective:** Generate detailed analysis reports and visualizations.
+
+**Commands:**
+```bash
+cd scripts
+python3 04_example_analysis.py
+```
+
+**What it does:**
+- Performs comprehensive statistical analysis on the results
+- Generates comparison plots for:
+  - Interlayer spacing by dopant and doping type
+  - Formation energies ranking
+  - Lattice parameter distributions
+  - Correlation analyses between properties
+- Creates publication-quality figures
+- Exports detailed analysis reports
+
+**Prerequisites:**
+- Optional: matplotlib, scipy, scikit-learn (for plotting and advanced stats)
+
+**Output:**
+- Plots saved to `03_analysis/plots/`
+- Analysis reports in console
+
+**Expected time:** 1-3 minutes
+
+**Customization:**
+Edit `scripts/04_example_analysis.py` to:
+- Adjust plot styles and formats
+- Add custom analysis functions
+- Modify statistical tests
+
+---
+
+### Step 5: Export to JSON Database Format (Optional)
+
+**Objective:** Export results to structured JSON format suitable for database upload.
+
+**Commands:**
+```bash
+cd scripts
+python3 05_export_to_json.py
+```
+
+**What it does:**
+- Loads completed calculation results from CSV
+- Enriches data with additional structure information:
+  - Symmetry analysis
+  - Composition details
+  - Density calculations
+  - Complete structure data
+- Creates MongoDB-compatible documents
+- Exports to structured JSON file
+
+**Output:**
+- `03_analysis/results_database.json` - Complete database-ready export
+
+**Expected time:** 2-5 minutes for ~50 structures
+
+**Use cases:**
+- Long-term data storage
+- Integration with materials databases
+- Advanced querying and analytics
+- Data sharing and collaboration
+
+---
+
+### Step 6: Upload to MongoDB (Optional)
+
+**Objective:** Upload calculation results to MongoDB database for advanced queries.
+
+**Configuration:**
+Edit `scripts/06_upload_to_mongodb.py`:
+```python
+MONGO_URI = "mongodb://user:password@host:port/"  # Your MongoDB connection
+DATABASE_NAME = "Graphitization"
+COLLECTION_NAME = "Doping"
+```
+
+**Commands:**
+```bash
+cd scripts
+python3 06_upload_to_mongodb.py
+```
+
+**What it does:**
+- Connects to MongoDB database
+- Loads data from JSON export
+- Assigns unique document IDs (m_id)
+- Uploads in batches with progress tracking
+- Verifies successful upload
+- Provides summary statistics
+
+**Prerequisites:**
+- MongoDB server (local or remote)
+- pymongo Python package
+- tqdm (for progress bars)
+
+**Expected time:** 1-10 minutes depending on database connection and data size
+
+**Features:**
+- Batch upload with error handling
+- Duplicate detection
+- Progress tracking
+- Upload verification
+- Configurable batch sizes
+
+**After upload:**
+Query your data using MongoDB:
+```javascript
+// Find all substitutional doping with La
+db.Doping.find({doping_type: "substitutional", dopant: "La"})
+
+// Find structures with large interlayer spacing
+db.Doping.find({avg_interlayer_spacing: {$gt: 3.5}})
+
+// Aggregate by dopant
+db.Doping.aggregate([
+  {$group: {_id: "$dopant", avg_spacing: {$avg: "$avg_interlayer_spacing"}}}
+])
+```
+
+---
+
 ## Quick Start (Full Workflow)
 
 ```bash
@@ -282,6 +412,16 @@ python3 03_extract_results.py
 # View results
 cd ../03_analysis
 cat summary_report.txt
+
+# (Optional) Step 4: Advanced analysis
+cd ../scripts
+python3 04_example_analysis.py
+
+# (Optional) Step 5: Export to JSON
+python3 05_export_to_json.py
+
+# (Optional) Step 6: Upload to MongoDB (configure first)
+python3 06_upload_to_mongodb.py
 ```
 
 ---
@@ -523,6 +663,13 @@ For issues with:
 
 ## Changelog
 
+- **v1.1** (2025-11-25): Enhanced analysis and data management
+  - Added Step 4: Advanced analysis with plotting (04_example_analysis.py)
+  - Added Step 5: JSON export for database upload (05_export_to_json.py)
+  - Added Step 6: MongoDB database upload (06_upload_to_mongodb.py)
+  - Enhanced statistical analysis capabilities
+  - Added data export and sharing features
+
 - **v1.0** (2024-11-24): Initial SOP release
   - Complete workflow from pristine relaxation to results analysis
   - Support for substitutional and interstitial doping
@@ -531,6 +678,6 @@ For issues with:
 
 ---
 
-**Last Updated:** 2024-11-24
+**Last Updated:** 2025-11-25
 **Author:** Automated Workflow System
-**Version:** 1.0
+**Version:** 1.1
