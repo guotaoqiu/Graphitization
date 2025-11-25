@@ -14,10 +14,14 @@ try:
     import matplotlib.pyplot as plt
     import matplotlib
     matplotlib.use('Agg')  # For non-interactive backend
+    from scipy import stats
+    from sklearn.linear_model import LinearRegression
     HAS_MATPLOTLIB = True
+    HAS_SCIPY = True
 except ImportError:
-    print("Warning: matplotlib not available. Plotting disabled.")
+    print("Warning: matplotlib/scipy not available. Plotting disabled.")
     HAS_MATPLOTLIB = False
+    HAS_SCIPY = False
 
 
 def load_results(results_file='../03_analysis/results_summary.csv'):
@@ -185,6 +189,136 @@ def identify_graphitization_promoters(df):
     return spacing_by_dopant
 
 
+def plot_concentration_analysis(df, output_dir='../03_analysis'):
+    """
+    Plot doping concentration vs various properties with linear regression
+
+    Plots: concentration vs a, c, layer_spacing, volume, formation_energy
+    """
+    if not HAS_MATPLOTLIB:
+        print("\nSkipping concentration plots: matplotlib not available")
+        return
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\n" + "="*70)
+    print("CONCENTRATION ANALYSIS PLOTS")
+    print("="*70)
+
+    # Filter only doped structures (exclude pure)
+    df_doped = df[df.get('doping_type', '') != 'pure'].copy()
+
+    if 'doping_concentration_percent' not in df_doped.columns:
+        print("No doping concentration data available")
+        return
+
+    # Remove NaN values
+    df_doped = df_doped.dropna(subset=['doping_concentration_percent'])
+
+    if len(df_doped) == 0:
+        print("No doped structures with concentration data")
+        return
+
+    # Properties to plot
+    properties = {
+        'a': ('Lattice Parameter a (Å)', 'concentration_vs_a.png'),
+        'c': ('Lattice Parameter c (Å)', 'concentration_vs_c.png'),
+        'avg_interlayer_spacing': ('Layer Spacing (Å)', 'concentration_vs_spacing.png'),
+        'volume': ('Volume (Å³)', 'concentration_vs_volume.png'),
+        'formation_energy': ('Formation Energy (eV)', 'concentration_vs_formation_energy.png'),
+    }
+
+    regression_results = {}
+
+    for prop, (ylabel, filename) in properties.items():
+        if prop not in df_doped.columns:
+            print(f"  Skipping {prop}: not in data")
+            continue
+
+        # Filter valid data
+        df_plot = df_doped.dropna(subset=[prop, 'doping_concentration_percent'])
+
+        if len(df_plot) < 3:
+            print(f"  Skipping {prop}: insufficient data points")
+            continue
+
+        X = df_plot['doping_concentration_percent'].values.reshape(-1, 1)
+        y = df_plot[prop].values
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        # Color by dopant if available
+        if 'dopant' in df_plot.columns:
+            dopants = df_plot['dopant'].unique()
+            colors = plt.cm.tab10(np.linspace(0, 1, len(dopants)))
+
+            for dopant, color in zip(dopants, colors):
+                subset = df_plot[df_plot['dopant'] == dopant]
+                ax.scatter(
+                    subset['doping_concentration_percent'],
+                    subset[prop],
+                    label=dopant,
+                    s=100,
+                    alpha=0.7,
+                    color=color,
+                    edgecolors='black',
+                    linewidths=0.5
+                )
+        else:
+            ax.scatter(X, y, s=100, alpha=0.7, edgecolors='black', linewidths=0.5)
+
+        # Linear regression
+        if HAS_SCIPY and len(df_plot) >= 3:
+            model = LinearRegression()
+            model.fit(X, y)
+            y_pred = model.predict(X)
+
+            # Calculate R²
+            slope = model.coef_[0]
+            intercept = model.intercept_
+            r_squared = model.score(X, y)
+
+            # Plot regression line
+            x_line = np.linspace(X.min(), X.max(), 100).reshape(-1, 1)
+            y_line = model.predict(x_line)
+            ax.plot(x_line, y_line, 'r--', linewidth=2,
+                   label=f'Linear fit: y={slope:.4f}x+{intercept:.4f}\nR²={r_squared:.4f}')
+
+            # Store regression results
+            regression_results[prop] = {
+                'slope': slope,
+                'intercept': intercept,
+                'r_squared': r_squared,
+                'n_points': len(df_plot)
+            }
+
+            print(f"  {prop}: slope={slope:.4f}, R²={r_squared:.4f}")
+
+        ax.set_xlabel('Doping Concentration (%)', fontsize=12, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
+        ax.set_title(f'Doping Concentration vs {ylabel.split("(")[0].strip()}',
+                    fontsize=14, fontweight='bold')
+        ax.legend(fontsize=9)
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+
+        plot_path = output_dir / filename
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"✓ Saved: {plot_path}")
+        plt.close()
+
+    # Save regression results to JSON
+    if regression_results:
+        regression_path = output_dir / 'concentration_regression_results.json'
+        with open(regression_path, 'w') as f:
+            json.dump(regression_results, f, indent=2)
+        print(f"\n✓ Regression results saved to: {regression_path}")
+
+    return regression_results
+
+
 def create_plots(df, output_dir='../03_analysis'):
     """Create visualization plots"""
     if not HAS_MATPLOTLIB:
@@ -343,6 +477,9 @@ def main():
     analyze_lattice_parameters(df)
     analyze_energies(df)
     identify_graphitization_promoters(df)
+
+    # Concentration analysis with linear regression
+    plot_concentration_analysis(df)
 
     # Create plots
     create_plots(df)
