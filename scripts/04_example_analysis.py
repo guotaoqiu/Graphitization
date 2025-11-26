@@ -355,7 +355,11 @@ def create_plots(df, output_dir='../03_analysis'):
             index='dopant',
             columns='doping_type',
             aggfunc='mean'
-        ).sort_values(by=pivot.columns[0] if len(pivot.columns) > 0 else 'substitutional')
+        )
+
+        # Sort by first column if available
+        if len(pivot.columns) > 0:
+            pivot = pivot.sort_values(by=pivot.columns[0])
 
         pivot.plot(kind='bar', ax=ax, width=0.8)
         ax.set_xlabel('Dopant Element', fontsize=12)
