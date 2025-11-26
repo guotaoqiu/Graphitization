@@ -31,39 +31,72 @@ failed_jobs=0
 pending_jobs=0
 
 # Loop through all job directories
-for job_dir in "$CALC_DIR"/*/; do
-    if [ -d "$job_dir" ]; then
-        total_jobs=$((total_jobs + 1))
-        job_name=$(basename "$job_dir")
+# mpjob creates nested structure: structure_name/structure_name/calc_type/
+for structure_dir in "$CALC_DIR"/*/; do
+    if [ -d "$structure_dir" ]; then
+        structure_name=$(basename "$structure_dir")
 
-        # Check for completion markers
-        if [ -f "$job_dir/CONTCAR" ] && [ -f "$job_dir/OUTCAR" ]; then
-            # Check if calculation completed successfully
-            if grep -q "reached required accuracy" "$job_dir/OUTCAR" 2>/dev/null; then
-                completed_jobs=$((completed_jobs + 1))
-                status="${GREEN}COMPLETED${NC}"
-            elif grep -q "ZBRENT: fatal error" "$job_dir/OUTCAR" 2>/dev/null || \
-                 grep -q "ERROR" "$job_dir/OUTCAR" 2>/dev/null; then
-                failed_jobs=$((failed_jobs + 1))
-                status="${RED}FAILED${NC}"
-            else
+        # Find calculation directories (may be nested: structure_name/calc_type/ or structure_name/structure_name/calc_type/)
+        # Check for common calculation type directories
+        calc_dirs=()
+
+        # Pattern 1: structure_name/structure_name/calc_type/
+        if [ -d "$structure_dir/$structure_name" ]; then
+            for calc_type_dir in "$structure_dir/$structure_name"/*/; do
+                if [ -d "$calc_type_dir" ]; then
+                    calc_dirs+=("$calc_type_dir")
+                fi
+            done
+        fi
+
+        # Pattern 2: structure_name/calc_type/ (fallback)
+        if [ ${#calc_dirs[@]} -eq 0 ]; then
+            for calc_type_dir in "$structure_dir"/*/; do
+                if [ -d "$calc_type_dir" ] && [ "$(basename "$calc_type_dir")" != "$structure_name" ]; then
+                    calc_dirs+=("$calc_type_dir")
+                fi
+            done
+        fi
+
+        # If no nested calculation directories found, check the structure directory itself
+        if [ ${#calc_dirs[@]} -eq 0 ]; then
+            calc_dirs+=("$structure_dir")
+        fi
+
+        # Check each calculation directory
+        for calc_dir in "${calc_dirs[@]}"; do
+            total_jobs=$((total_jobs + 1))
+            job_name="$structure_name/$(basename "$calc_dir")"
+
+            # Check for completion markers
+            if [ -f "$calc_dir/CONTCAR" ] && [ -f "$calc_dir/OUTCAR" ]; then
+                # Check if calculation completed successfully
+                if grep -q "reached required accuracy" "$calc_dir/OUTCAR" 2>/dev/null; then
+                    completed_jobs=$((completed_jobs + 1))
+                    status="${GREEN}COMPLETED${NC}"
+                elif grep -q "ZBRENT: fatal error" "$calc_dir/OUTCAR" 2>/dev/null || \
+                     grep -q "ERROR" "$calc_dir/OUTCAR" 2>/dev/null; then
+                    failed_jobs=$((failed_jobs + 1))
+                    status="${RED}FAILED${NC}"
+                else
+                    running_jobs=$((running_jobs + 1))
+                    status="${YELLOW}RUNNING${NC}"
+                fi
+            elif [ -f "$calc_dir/INCAR" ]; then
+                # INCAR exists but no OUTCAR yet
                 running_jobs=$((running_jobs + 1))
                 status="${YELLOW}RUNNING${NC}"
+            else
+                # Job not started
+                pending_jobs=$((pending_jobs + 1))
+                status="${BLUE}PENDING${NC}"
             fi
-        elif [ -f "$job_dir/INCAR" ]; then
-            # INCAR exists but no OUTCAR yet
-            running_jobs=$((running_jobs + 1))
-            status="${YELLOW}RUNNING${NC}"
-        else
-            # Job not started
-            pending_jobs=$((pending_jobs + 1))
-            status="${BLUE}PENDING${NC}"
-        fi
 
-        # Only print if verbose flag is set
-        if [ "$1" == "-v" ] || [ "$1" == "--verbose" ]; then
-            echo -e "$job_name: $status"
-        fi
+            # Only print if verbose flag is set
+            if [ "$1" == "-v" ] || [ "$1" == "--verbose" ]; then
+                echo -e "$job_name: $status"
+            fi
+        done
     fi
 done
 
