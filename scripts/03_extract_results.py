@@ -343,8 +343,8 @@ class GraphiteResultsAnalyzer:
                                e.g., {'1x1x1': -18.45, '2x2x1': -147.6, ...}
 
         Formation energy formulas:
-        - Substitutional: E_f = E_pure - n*E_C + n*E_dopant - E_doped
-        - Interstitial: E_f = E_pure + n*E_dopant - E_doped
+        - Substitutional: E_f = E_doped - E_pure + n*E_C - n*E_dopant
+        - Interstitial: E_f = E_doped - E_pure - n*E_dopant
         """
         print("\nCalculating formation energies with chemical potentials...")
 
@@ -380,11 +380,11 @@ class GraphiteResultsAnalyzer:
 
             # Calculate formation energy based on doping type
             if doping_type == 'substitutional':
-                # E_f = E_pure - n*E_C + n*E_dopant - E_doped
-                E_f = E_pure - n_dopant * E_C + n_dopant * E_dopant - E_doped
+                # E_f = E_doped - E_pure + n*E_C - n*E_dopant
+                E_f = E_doped - E_pure + n_dopant * E_C - n_dopant * E_dopant
             elif doping_type == 'interstitial':
                 # E_f = E_pure + n*E_dopant - E_doped
-                E_f = E_pure + n_dopant * E_dopant - E_doped
+                E_f = E_doped - n_dopant * E_dopant - E_pure
             else:
                 E_f = None
 
