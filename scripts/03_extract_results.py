@@ -78,32 +78,68 @@ class GraphiteResultsAnalyzer:
     def calculate_interlayer_spacing(self, structure):
         """
         Calculate interlayer spacing for graphite
-        Assumes layers are perpendicular to c-axis
+        Calculates distance between average z-positions of the two carbon layers
         Only considers carbon atoms to avoid including interstitial dopants
         """
         # Get z-coordinates of carbon atoms only (graphene layers)
-        z_coords = [site.frac_coords[2] for site in structure if site.species_string == 'C']
-        z_coords_sorted = sorted(set([round(z, 4) for z in z_coords]))
+        z_coords = np.array([site.frac_coords[2] for site in structure if site.species_string == 'C'])
 
+        if len(z_coords) < 2:
+            return {
+                'avg_interlayer_spacing': None,
+                'min_interlayer_spacing': None,
+                'max_interlayer_spacing': None,
+                'num_layers': 0,
+            }
+
+        # Sort z-coordinates
+        z_coords_sorted = np.sort(z_coords)
+
+        # Identify two layers by finding the largest gap in z-coordinates
+        # This separates the two graphene layers
         if len(z_coords_sorted) >= 2:
-            # Calculate spacing between adjacent layers
-            spacings = []
-            for i in range(len(z_coords_sorted) - 1):
-                spacing = abs(z_coords_sorted[i+1] - z_coords_sorted[i])
-                # Convert fractional to Cartesian (multiply by c)
-                spacing_angstrom = spacing * structure.lattice.c
-                spacings.append(spacing_angstrom)
+            # Calculate gaps between consecutive atoms
+            gaps = np.diff(z_coords_sorted)
 
-            # Also check spacing across periodic boundary
-            boundary_spacing = (1.0 - z_coords_sorted[-1] + z_coords_sorted[0])
-            boundary_spacing_angstrom = boundary_spacing * structure.lattice.c
-            spacings.append(boundary_spacing_angstrom)
+            # Find the largest gap - this separates the two layers
+            max_gap_idx = np.argmax(gaps)
+
+            # Split into two layers
+            layer1 = z_coords_sorted[:max_gap_idx + 1]
+            layer2 = z_coords_sorted[max_gap_idx + 1:]
+
+            # Handle periodic boundary case: check if last and first atoms are closer
+            # than the identified gap
+            boundary_gap = 1.0 - z_coords_sorted[-1] + z_coords_sorted[0]
+            if boundary_gap > gaps[max_gap_idx]:
+                # The max gap is correct
+                avg_z1 = np.mean(layer1)
+                avg_z2 = np.mean(layer2)
+            else:
+                # The layers wrap around the periodic boundary
+                # Split at a different point
+                layer1 = z_coords_sorted[max_gap_idx + 1:]
+                layer2 = z_coords_sorted[:max_gap_idx + 1]
+                avg_z1 = np.mean(layer1)
+                avg_z2 = np.mean(layer2)
+
+            # Calculate interlayer spacing
+            spacing_frac = abs(avg_z2 - avg_z1)
+
+            # Also consider periodic boundary
+            spacing_frac_periodic = 1.0 - spacing_frac
+
+            # Choose the smaller spacing (the actual interlayer distance)
+            spacing_frac = min(spacing_frac, spacing_frac_periodic)
+
+            # Convert to Cartesian coordinates (Angstroms)
+            spacing_angstrom = spacing_frac * structure.lattice.c
 
             return {
-                'avg_interlayer_spacing': np.mean(spacings),
-                'min_interlayer_spacing': np.min(spacings),
-                'max_interlayer_spacing': np.max(spacings),
-                'num_layers': len(z_coords_sorted),
+                'avg_interlayer_spacing': spacing_angstrom,
+                'min_interlayer_spacing': spacing_angstrom,
+                'max_interlayer_spacing': spacing_angstrom,
+                'num_layers': 2,
             }
         else:
             return {
@@ -420,36 +456,44 @@ class GraphiteResultsAnalyzer:
                         avg_spacing = completed_subset['avg_interlayer_spacing'].mean()
                         f.write(f"  Avg interlayer spacing: {avg_spacing:.4f} Å\n")
 
-            # Analysis by dopant
-            if 'dopant' in df.columns:
-                f.write("\n\nResults by dopant element:\n")
-                f.write("-"*70 + "\n")
+            # Analysis by dopant, separated by doping type
+            if 'dopant' in df.columns and 'doping_type' in df.columns:
                 completed_df = df[df['status'] == 'completed']
 
                 if len(completed_df) > 0:
-                    # Filter out None/NaN values before sorting
-                    for dopant in sorted([d for d in df['dopant'].unique() if pd.notna(d)]):
-                        if pd.isna(dopant):
-                            continue
-                        subset = completed_df[completed_df['dopant'] == dopant]
+                    # Split by doping type
+                    for doping_type in ['interstitial', 'substitutional']:
+                        f.write(f"\n\nResults by dopant element ({doping_type.capitalize()}):\n")
+                        f.write("-"*70 + "\n")
 
-                        if len(subset) > 0:
-                            f.write(f"\n{dopant}:\n")
-                            f.write(f"  Number of structures: {len(subset)}\n")
+                        type_df = completed_df[completed_df['doping_type'] == doping_type]
 
-                            if 'avg_interlayer_spacing' in subset.columns:
-                                mean_spacing = subset['avg_interlayer_spacing'].mean()
-                                std_spacing = subset['avg_interlayer_spacing'].std()
-                                f.write(f"  Interlayer spacing: {mean_spacing:.4f} ± {std_spacing:.4f} Å\n")
+                        if len(type_df) > 0:
+                            # Filter out None/NaN values before sorting
+                            for dopant in sorted([d for d in type_df['dopant'].unique() if pd.notna(d)]):
+                                if pd.isna(dopant):
+                                    continue
+                                subset = type_df[type_df['dopant'] == dopant]
 
-                            if 'c' in subset.columns:
-                                mean_c = subset['c'].mean()
-                                std_c = subset['c'].std()
-                                f.write(f"  c parameter: {mean_c:.4f} ± {std_c:.4f} Å\n")
+                                if len(subset) > 0:
+                                    f.write(f"\n{dopant}:\n")
+                                    f.write(f"  Number of structures: {len(subset)}\n")
 
-                            if 'energy_per_atom' in subset.columns:
-                                mean_energy = subset['energy_per_atom'].mean()
-                                f.write(f"  Avg energy per atom: {mean_energy:.4f} eV\n")
+                                    if 'avg_interlayer_spacing' in subset.columns:
+                                        mean_spacing = subset['avg_interlayer_spacing'].mean()
+                                        std_spacing = subset['avg_interlayer_spacing'].std()
+                                        f.write(f"  Interlayer spacing: {mean_spacing:.4f} ± {std_spacing:.4f} Å\n")
+
+                                    if 'c' in subset.columns:
+                                        mean_c = subset['c'].mean()
+                                        std_c = subset['c'].std()
+                                        f.write(f"  c parameter: {mean_c:.4f} ± {std_c:.4f} Å\n")
+
+                                    if 'energy_per_atom' in subset.columns:
+                                        mean_energy = subset['energy_per_atom'].mean()
+                                        f.write(f"  Avg energy per atom: {mean_energy:.4f} eV\n")
+                        else:
+                            f.write(f"\nNo completed {doping_type} structures found.\n")
 
             f.write("\n" + "="*70 + "\n")
 
