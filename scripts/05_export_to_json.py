@@ -28,6 +28,45 @@ class GraphiteResultsExporter:
         self.calc_dir = Path(calc_dir)
         self.export_data = []
 
+    def find_contcar_path(self, job_name):
+        """
+        Find CONTCAR path for a given job name
+        Handles nested directory structure created by mpjob
+
+        Args:
+            job_name: Name of the job/structure
+
+        Returns:
+            Path to CONTCAR file or None if not found
+        """
+        structure_dir = self.calc_dir / job_name
+
+        if not structure_dir.exists():
+            return None
+
+        # Pattern 1: structure_name/structure_name/calc_type/CONTCAR
+        nested_dir = structure_dir / job_name
+        if nested_dir.is_dir():
+            for calc_type_dir in nested_dir.iterdir():
+                if calc_type_dir.is_dir():
+                    contcar_path = calc_type_dir / 'CONTCAR'
+                    if contcar_path.exists():
+                        return contcar_path
+
+        # Pattern 2: structure_name/calc_type/CONTCAR
+        for calc_type_dir in structure_dir.iterdir():
+            if calc_type_dir.is_dir() and calc_type_dir.name != job_name:
+                contcar_path = calc_type_dir / 'CONTCAR'
+                if contcar_path.exists():
+                    return contcar_path
+
+        # Pattern 3: structure_name/CONTCAR (old format)
+        contcar_path = structure_dir / 'CONTCAR'
+        if contcar_path.exists():
+            return contcar_path
+
+        return None
+
     def load_results(self):
         """Load results from CSV"""
         df = pd.read_csv(self.results_csv)
@@ -48,9 +87,9 @@ class GraphiteResultsExporter:
         """
         # Load final structure
         job_name = row['job_name']
-        contcar_path = self.calc_dir / job_name / 'CONTCAR'
+        contcar_path = self.find_contcar_path(job_name)
 
-        if not contcar_path.exists():
+        if not contcar_path or not contcar_path.exists():
             print(f"Warning: CONTCAR not found for {job_name}")
             return None
 

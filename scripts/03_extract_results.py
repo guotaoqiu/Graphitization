@@ -161,23 +161,26 @@ class GraphiteResultsAnalyzer:
             print(f"Warning: Could not read {outcar_path}: {e}")
             return 'unknown'
 
-    def analyze_single_job(self, job_dir):
+    def analyze_single_job(self, job_dir, structure_name=None):
         """Analyze results from a single calculation job"""
         job_name = job_dir.name
-        print(f"Analyzing: {job_name}")
+        # Use structure_name if provided for metadata lookup
+        metadata_key = structure_name if structure_name else job_name
+        print(f"Analyzing: {structure_name if structure_name else job_name} ({job_name})")
 
         result = {
-            'job_name': job_name,
+            'job_name': metadata_key,
+            'calc_type': job_name,
             'status': self.check_calculation_status(job_dir),
         }
 
         # Add metadata if available
-        if job_name in self.metadata:
-            result.update(self.metadata[job_name])
+        if metadata_key in self.metadata:
+            result.update(self.metadata[metadata_key])
 
         # Only extract data from completed calculations
         if result['status'] != 'completed':
-            print(f"  Skipping {job_name}: Status = {result['status']}")
+            print(f"  Skipping {metadata_key}: Status = {result['status']}")
             return result
 
         # Paths to output files
@@ -221,14 +224,41 @@ class GraphiteResultsAnalyzer:
         print("="*70)
         print()
 
-        # Find all job directories
-        job_dirs = [d for d in self.calc_dir.iterdir() if d.is_dir()]
-        print(f"Found {len(job_dirs)} job directories")
+        # Find all calculation directories
+        # mpjob creates nested structure: structure_name/structure_name/calc_type/
+        calc_dirs = []
+
+        for structure_dir in self.calc_dir.iterdir():
+            if not structure_dir.is_dir():
+                continue
+
+            structure_name = structure_dir.name
+
+            # Pattern 1: structure_name/structure_name/calc_type/
+            nested_dir = structure_dir / structure_name
+            if nested_dir.is_dir():
+                for calc_type_dir in nested_dir.iterdir():
+                    if calc_type_dir.is_dir():
+                        calc_dirs.append((calc_type_dir, structure_name))
+            # Pattern 2: structure_name/calc_type/ (fallback)
+            else:
+                found_calc_dir = False
+                for calc_type_dir in structure_dir.iterdir():
+                    if calc_type_dir.is_dir() and calc_type_dir.name != structure_name:
+                        calc_dirs.append((calc_type_dir, structure_name))
+                        found_calc_dir = True
+
+                # Pattern 3: Files directly in structure_name/ (old format)
+                if not found_calc_dir:
+                    if (structure_dir / 'OUTCAR').exists() or (structure_dir / 'CONTCAR').exists():
+                        calc_dirs.append((structure_dir, structure_name))
+
+        print(f"Found {len(calc_dirs)} calculation directories")
         print()
 
         # Analyze each job
-        for job_dir in job_dirs:
-            result = self.analyze_single_job(job_dir)
+        for calc_dir, structure_name in calc_dirs:
+            result = self.analyze_single_job(calc_dir, structure_name)
             self.results.append(result)
             print()
 
