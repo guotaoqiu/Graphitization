@@ -80,6 +80,16 @@ class GraphiteResultsAnalyzer:
         Calculate interlayer spacing for graphite
         Calculates distance between average z-positions of the two carbon layers
         Only considers carbon atoms to avoid including interstitial dopants
+
+        IMPORTANT: Due to periodic boundary conditions (PBC), there are effectively three layers:
+        - Layer A (near z=0)
+        - Layer B (near z=0.5)
+        - Layer C (near z=1.0, which is equivalent to Layer A due to PBC)
+
+        When doping causes expansion, Layer A can be pushed to negative z (wraps to ~z=0.9-1.0).
+        This compresses the spacing between B and C (or A in the next cell).
+        We must measure the EXPANDED spacing between layers near z=0 and z=0.5,
+        NOT the compressed spacing to the layer near z=1.0.
         """
         # Get z-coordinates of carbon atoms only (graphene layers)
         z_coords = np.array([site.frac_coords[2] for site in structure if site.species_string == 'C'])
@@ -92,8 +102,12 @@ class GraphiteResultsAnalyzer:
                 'num_layers': 0,
             }
 
+        # Normalize z-coordinates to [0, 1) to handle atoms that may have wrapped
+        # due to periodic boundary conditions
+        z_coords_normalized = z_coords % 1.0
+
         # Sort z-coordinates
-        z_coords_sorted = np.sort(z_coords)
+        z_coords_sorted = np.sort(z_coords_normalized)
 
         # Identify two layers by finding the largest gap in z-coordinates
         # This separates the two graphene layers
@@ -109,10 +123,10 @@ class GraphiteResultsAnalyzer:
             layer2 = z_coords_sorted[max_gap_idx + 1:]
 
             # Handle periodic boundary case: check if last and first atoms are closer
-            # than the identified gap
+            # than the identified gap (i.e., the gap wraps around z=0/z=1 boundary)
             boundary_gap = 1.0 - z_coords_sorted[-1] + z_coords_sorted[0]
             if boundary_gap > gaps[max_gap_idx]:
-                # The max gap is correct
+                # The max gap is correct (layers don't wrap)
                 avg_z1 = np.mean(layer1)
                 avg_z2 = np.mean(layer2)
             else:
@@ -129,8 +143,13 @@ class GraphiteResultsAnalyzer:
             # Also consider periodic boundary
             spacing_frac_periodic = 1.0 - spacing_frac
 
-            # Choose the smaller spacing (the actual interlayer distance)
-            spacing_frac = min(spacing_frac, spacing_frac_periodic)
+            # KEY FIX: We want the spacing between layer near z=0 and layer near z=0.5
+            # NOT the spacing to the layer near z=1.0 (which is compressed after expansion)
+            # In ideal graphite, spacing ≈ 0.5 (half the c-axis)
+            # After interstitial doping, one spacing expands (>0.5), one compresses (<0.5)
+            # We want the EXPANDED spacing (the larger one), which represents the true
+            # interlayer distance between the two physical layers in the unit cell
+            spacing_frac = max(spacing_frac, spacing_frac_periodic)
 
             # Convert to Cartesian coordinates (Angstroms)
             spacing_angstrom = spacing_frac * structure.lattice.c
