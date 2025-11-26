@@ -383,8 +383,8 @@ class GraphiteResultsAnalyzer:
                 # E_f = E_doped - E_pure + n*E_C - n*E_dopant
                 E_f = E_doped - E_pure + n_dopant * E_C - n_dopant * E_dopant
             elif doping_type == 'interstitial':
-                # E_f = E_doped - E_pure - n*E_dopant
-                E_f = E_doped - E_pure - n_dopant * E_dopant
+                # E_f = E_pure + n*E_dopant - E_doped
+                E_f = E_doped - n_dopant * E_dopant - E_pure
             else:
                 E_f = None
 
