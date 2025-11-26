@@ -79,9 +79,10 @@ class GraphiteResultsAnalyzer:
         """
         Calculate interlayer spacing for graphite
         Assumes layers are perpendicular to c-axis
+        Only considers carbon atoms to avoid including interstitial dopants
         """
-        # Get all z-coordinates in fractional coordinates
-        z_coords = [site.frac_coords[2] for site in structure]
+        # Get z-coordinates of carbon atoms only (graphene layers)
+        z_coords = [site.frac_coords[2] for site in structure if site.species_string == 'C']
         z_coords_sorted = sorted(set([round(z, 4) for z in z_coords]))
 
         if len(z_coords_sorted) >= 2:
@@ -426,7 +427,8 @@ class GraphiteResultsAnalyzer:
                 completed_df = df[df['status'] == 'completed']
 
                 if len(completed_df) > 0:
-                    for dopant in sorted(df['dopant'].unique()):
+                    # Filter out None/NaN values before sorting
+                    for dopant in sorted([d for d in df['dopant'].unique() if pd.notna(d)]):
                         if pd.isna(dopant):
                             continue
                         subset = completed_df[completed_df['dopant'] == dopant]
