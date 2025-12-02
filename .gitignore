@@ -45,3 +45,9 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Generated output directories
+extracted_contcars/
+02_calculations/
+01_structure_generation/
+03_analysis/
