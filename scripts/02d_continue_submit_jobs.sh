@@ -69,7 +69,7 @@ check_wall_time() {
 }
 
 ################################################################################
-# Function to resubmit a running/incomplete job (CONTCAR -> POSCAR)
+# Function to resubmit a running/incomplete job using mpjob -j
 ################################################################################
 resubmit_running_job() {
     local calc_dir=$1
@@ -78,37 +78,32 @@ resubmit_running_job() {
 
     echo -e "${YELLOW}Resubmitting INCOMPLETE job: ${job_name}${NC}"
 
-    local original_dir=$(pwd)
-    cd "$calc_dir" || return 1
-
-    # Analyze calculation status
+    # Analyze calculation status without changing directory
     local calc_failed=false
     local hit_wall_time=false
     local contcar_valid=false
-    local use_algo_fast=false
 
     # Check if calculation failed with errors
-    if [ -f "OUTCAR" ]; then
-        if grep -q "ZBRENT: fatal error" "OUTCAR" 2>/dev/null || \
-           grep -q "ERROR" "OUTCAR" 2>/dev/null; then
+    if [ -f "$calc_dir/OUTCAR" ]; then
+        if grep -q "ZBRENT: fatal error" "$calc_dir/OUTCAR" 2>/dev/null || \
+           grep -q "ERROR" "$calc_dir/OUTCAR" 2>/dev/null; then
             calc_failed=true
-            use_algo_fast=true
             echo "  ⚠ Calculation failed with errors"
         fi
 
         # Check for wall time limit
-        if check_wall_time "OUTCAR"; then
+        if check_wall_time "$calc_dir/OUTCAR"; then
             hit_wall_time=true
             echo "  ⏱ Calculation hit wall time limit"
         fi
     fi
 
     # Check CONTCAR validity
-    if [ -f "CONTCAR" ]; then
-        local line_count=$(wc -l < "CONTCAR" 2>/dev/null || echo 0)
+    if [ -f "$calc_dir/CONTCAR" ]; then
+        local line_count=$(wc -l < "$calc_dir/CONTCAR" 2>/dev/null || echo 0)
         if [ "$line_count" -ge 8 ]; then
             # Check if CONTCAR has actual atomic coordinates (not all zeros)
-            if tail -n +8 "CONTCAR" | grep -q "[1-9]" 2>/dev/null; then
+            if tail -n +8 "$calc_dir/CONTCAR" | grep -q "[1-9]" 2>/dev/null; then
                 contcar_valid=true
                 echo "  ✓ Valid CONTCAR found (${line_count} lines)"
             else
@@ -121,53 +116,38 @@ resubmit_running_job() {
         echo "  ⚠ No CONTCAR found"
     fi
 
-    # Backup original files before resubmission
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    if [ -f "POSCAR" ]; then
-        cp POSCAR POSCAR.backup.$timestamp
-    fi
-    if [ -f "INCAR" ]; then
-        cp INCAR INCAR.backup.$timestamp
-    fi
-
-    # Decide which structure to use
-    if [ "$contcar_valid" = true ] && [ "$calc_failed" = false ]; then
-        # Use CONTCAR to continue calculation
-        cp CONTCAR POSCAR
+    # Prepare for continuation
+    if [ "$contcar_valid" = true ]; then
+        # Copy CONTCAR to POSCAR for continuation
+        cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
         echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
     else
-        # Use original structure with ALGO=Fast
-        use_algo_fast=true
+        echo -e "  ${CYAN}→ Using existing POSCAR${NC}"
+    fi
 
-        # Find original structure file
-        structure_file=$(find . -maxdepth 1 -name "*.vasp" | head -1)
+    # Find the original structure file in the parent structure directory
+    local structure_dir=$(dirname "$calc_dir")
+    # Go up one more level if in nested structure (structure_name/structure_name/calc_type/)
+    if [ "$(basename "$structure_dir")" == "$structure_name" ]; then
+        structure_dir=$(dirname "$structure_dir")
+    fi
 
-        if [ -n "$structure_file" ]; then
-            cp "$structure_file" POSCAR
-            echo -e "  ${CYAN}→ Restarting from original structure (.vasp)${NC}"
-        elif [ -f "POSCAR.backup.$timestamp" ]; then
-            # Keep the existing POSCAR (which was just backed up)
-            echo -e "  ${CYAN}→ Using existing POSCAR${NC}"
+    local structure_file=$(find "$structure_dir" -maxdepth 1 -name "*.vasp" | head -1)
+
+    if [ -z "$structure_file" ]; then
+        # Try to use POSCAR from calc_dir
+        if [ -f "$calc_dir/POSCAR" ]; then
+            structure_file="$calc_dir/POSCAR"
         else
-            echo -e "  ${RED}✗ No valid structure file found${NC}"
-            cd "$original_dir"
+            echo -e "  ${RED}✗ No structure file found${NC}"
+            echo "----------------------------------------"
             return 1
         fi
     fi
 
-    # Modify INCAR if needed
-    if [ "$use_algo_fast" = true ] && [ -f "INCAR" ]; then
-        if grep -q "^[[:space:]]*ALGO" "INCAR"; then
-            sed -i 's/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Fast/' "INCAR"
-            echo "  ✓ Changed ALGO to Fast in INCAR"
-        else
-            echo "ALGO = Fast" >> "INCAR"
-            echo "  ✓ Added ALGO = Fast to INCAR"
-        fi
-    fi
-
-    # Submit the job (mpjob will create nested directory structure)
-    local mpjob_cmd="mpjob POSCAR -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
+    # Build mpjob command using -j to continue from previous calculation
+    # The -m fast mode will automatically handle ALGO changes
+    local mpjob_cmd="mpjob \"$structure_file\" -j \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
     # Add custom parameters if specified
     if [ -n "$CUSTOM_PARAMS" ]; then
@@ -190,7 +170,6 @@ resubmit_running_job() {
         failed_resubmits=$((failed_resubmits + 1))
     fi
 
-    cd "$original_dir"
     echo "----------------------------------------"
 }
 
@@ -204,20 +183,27 @@ submit_pending_job() {
 
     echo -e "${BLUE}Submitting PENDING job: ${job_name}${NC}"
 
-    local original_dir=$(pwd)
-    cd "$calc_dir" || return 1
-
-    # Find the structure file (*.vasp)
-    structure_file=$(find . -maxdepth 1 -name "*.vasp" | head -1)
-
-    if [ -z "$structure_file" ]; then
-        echo -e "  ${RED}✗ No structure file found${NC}"
-        cd "$original_dir"
-        return 1
+    # Find the original structure file in the parent structure directory
+    local structure_dir=$(dirname "$calc_dir")
+    # Go up one more level if in nested structure (structure_name/structure_name/calc_type/)
+    if [ "$(basename "$structure_dir")" == "$structure_name" ]; then
+        structure_dir=$(dirname "$structure_dir")
     fi
 
-    # Construct mpjob command
-    local mpjob_cmd="mpjob $(basename $structure_file) -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
+    local structure_file=$(find "$structure_dir" -maxdepth 1 -name "*.vasp" | head -1)
+
+    if [ -z "$structure_file" ]; then
+        # Try to find .vasp file in calc_dir
+        structure_file=$(find "$calc_dir" -maxdepth 1 -name "*.vasp" | head -1)
+        if [ -z "$structure_file" ]; then
+            echo -e "  ${RED}✗ No structure file found${NC}"
+            echo "----------------------------------------"
+            return 1
+        fi
+    fi
+
+    # Construct mpjob command with explicit output directory
+    local mpjob_cmd="mpjob \"$structure_file\" -o \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
     # Add custom parameters if specified
     if [ -n "$CUSTOM_PARAMS" ]; then
@@ -240,7 +226,6 @@ submit_pending_job() {
         failed_resubmits=$((failed_resubmits + 1))
     fi
 
-    cd "$original_dir"
     echo "----------------------------------------"
 }
 
