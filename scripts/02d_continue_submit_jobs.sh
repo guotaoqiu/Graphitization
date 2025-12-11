@@ -49,14 +49,45 @@ resubmit_running_job() {
 
     cd "$calc_dir" || return 1
 
-    # Copy CONTCAR to POSCAR
+    # Check if calculation failed
+    local calc_failed=false
+    if [ -f "OUTCAR" ]; then
+        if grep -q "ZBRENT: fatal error" "OUTCAR" 2>/dev/null || \
+           grep -q "ERROR" "OUTCAR" 2>/dev/null; then
+            calc_failed=true
+            echo "  ⚠ Calculation failed, will change ALGO to Fast"
+        fi
+    fi
+
+    # Check CONTCAR and copy to POSCAR
+    local contcar_empty=false
     if [ -f "CONTCAR" ]; then
-        cp CONTCAR POSCAR
-        echo "  ✓ Copied CONTCAR to POSCAR"
+        # Check if CONTCAR is empty or has only a few lines (header only)
+        local line_count=$(wc -l < "CONTCAR" 2>/dev/null || echo 0)
+        if [ "$line_count" -lt 8 ]; then
+            contcar_empty=true
+            echo "  ⚠ CONTCAR is empty or incomplete, will use original structure and change ALGO to Fast"
+        else
+            cp CONTCAR POSCAR
+            echo "  ✓ Copied CONTCAR to POSCAR"
+        fi
     else
-        echo -e "  ${RED}✗ CONTCAR not found, cannot resubmit${NC}"
-        cd - > /dev/null
-        return 1
+        contcar_empty=true
+        echo "  ⚠ CONTCAR not found, will use original structure and change ALGO to Fast"
+    fi
+
+    # If CONTCAR is empty or failed, modify INCAR to use ALGO=Fast
+    if [ "$contcar_empty" = true ] || [ "$calc_failed" = true ]; then
+        if [ -f "INCAR" ]; then
+            # Change ALGO from Normal to Fast (or add if not present)
+            if grep -q "^[[:space:]]*ALGO" "INCAR"; then
+                sed -i 's/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Fast/' "INCAR"
+                echo "  ✓ Changed ALGO to Fast in INCAR"
+            else
+                echo "ALGO = Fast" >> "INCAR"
+                echo "  ✓ Added ALGO = Fast to INCAR"
+            fi
+        fi
     fi
 
     # Find the structure file (*.vasp)
@@ -64,10 +95,28 @@ resubmit_running_job() {
 
     if [ -z "$structure_file" ]; then
         # If no .vasp file found, use POSCAR
-        structure_file="POSCAR"
+        if [ -f "POSCAR" ]; then
+            structure_file="POSCAR"
+        else
+            echo -e "  ${RED}✗ No structure file found${NC}"
+            cd - > /dev/null
+            return 1
+        fi
     fi
 
-    # Construct mpjob command
+    # Create a temporary directory for mpjob output to avoid directory conflict
+    local temp_outdir="temp_mpjob_$$"
+    mkdir -p "$temp_outdir"
+
+    # Copy structure file to temp directory
+    cp "$(basename $structure_file)" "$temp_outdir/"
+
+    # Copy INCAR if it exists (to preserve ALGO changes)
+    if [ -f "INCAR" ]; then
+        cp "INCAR" "$temp_outdir/"
+    fi
+
+    # Construct mpjob command in temp directory
     local mpjob_cmd="mpjob $(basename $structure_file) -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
     # Add custom parameters if specified
@@ -78,17 +127,25 @@ resubmit_running_job() {
     # Add job name
     mpjob_cmd="$mpjob_cmd --name $structure_name"
 
-    # Submit job
+    # Submit job from temp directory
     echo "  Running: $mpjob_cmd"
+    cd "$temp_outdir"
     eval $mpjob_cmd
+    local submit_status=$?
+    cd - > /dev/null
 
-    if [ $? -eq 0 ]; then
+    if [ $submit_status -eq 0 ]; then
+        # Copy generated files back from temp directory
+        cp -r "$temp_outdir"/* .
         echo -e "  ${GREEN}✓ Successfully resubmitted${NC}"
         running_resubmitted=$((running_resubmitted + 1))
     else
         echo -e "  ${RED}✗ Failed to resubmit${NC}"
         failed_resubmits=$((failed_resubmits + 1))
     fi
+
+    # Clean up temp directory
+    rm -rf "$temp_outdir"
 
     cd - > /dev/null
     echo "----------------------------------------"
@@ -205,7 +262,9 @@ for structure_dir in "$CALC_DIR"/*/; do
 
             # Process based on status
             case "$status" in
-                RUNNING)
+                RUNNING|FAILED)
+                    # Both running and failed jobs should be resubmitted
+                    # Failed jobs will have ALGO changed to Fast automatically
                     resubmit_running_job "$calc_dir" "$structure_name" "$job_name"
                     ;;
                 PENDING)
