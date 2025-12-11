@@ -2,6 +2,7 @@
 ################################################################################
 # Continue Job Submission Script
 # Resubmits RUNNING jobs (with CONTCAR->POSCAR) and submits PENDING jobs
+# Handles wall time limits and incomplete calculations intelligently
 ################################################################################
 
 CALC_DIR="../02_calculations"
@@ -18,10 +19,17 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo "============================================================================"
-echo "Continue Job Submission (RUNNING + PENDING)"
+echo "Continue Job Submission (INCOMPLETE + RUNNING + PENDING)"
+echo "============================================================================"
+echo "Smart resubmission features:"
+echo "  • Detects wall time limits and continues from CONTCAR"
+echo "  • Handles failed calculations with ALGO=Fast"
+echo "  • Intelligently validates CONTCAR before using"
+echo "  • Backs up files before resubmission"
 echo "============================================================================"
 echo ""
 
@@ -38,86 +46,128 @@ skipped_jobs=0
 failed_resubmits=0
 
 ################################################################################
-# Function to resubmit a running job (CONTCAR -> POSCAR)
+# Function to check if calculation hit wall time limit
+################################################################################
+check_wall_time() {
+    local outcar_file="$1"
+
+    if [ ! -f "$outcar_file" ]; then
+        return 1  # No OUTCAR, can't determine
+    fi
+
+    # Check for common wall time indicators
+    if grep -q "STOPCAR" "$outcar_file" 2>/dev/null || \
+       grep -q "walltime" "$outcar_file" 2>/dev/null || \
+       tail -20 "$outcar_file" | grep -q "reached required accuracy" -v 2>/dev/null; then
+        # Check if it's NOT completed successfully
+        if ! grep -q "reached required accuracy" "$outcar_file" 2>/dev/null; then
+            return 0  # Hit wall time
+        fi
+    fi
+
+    return 1  # Did not hit wall time
+}
+
+################################################################################
+# Function to resubmit a running/incomplete job (CONTCAR -> POSCAR)
 ################################################################################
 resubmit_running_job() {
     local calc_dir=$1
     local structure_name=$2
     local job_name=$3
 
-    echo -e "${YELLOW}Resubmitting RUNNING job: ${job_name}${NC}"
+    echo -e "${YELLOW}Resubmitting INCOMPLETE job: ${job_name}${NC}"
 
+    local original_dir=$(pwd)
     cd "$calc_dir" || return 1
 
-    # Check if calculation failed
+    # Analyze calculation status
     local calc_failed=false
+    local hit_wall_time=false
+    local contcar_valid=false
+    local use_algo_fast=false
+
+    # Check if calculation failed with errors
     if [ -f "OUTCAR" ]; then
         if grep -q "ZBRENT: fatal error" "OUTCAR" 2>/dev/null || \
            grep -q "ERROR" "OUTCAR" 2>/dev/null; then
             calc_failed=true
-            echo "  ⚠ Calculation failed, will change ALGO to Fast"
+            use_algo_fast=true
+            echo "  ⚠ Calculation failed with errors"
+        fi
+
+        # Check for wall time limit
+        if check_wall_time "OUTCAR"; then
+            hit_wall_time=true
+            echo "  ⏱ Calculation hit wall time limit"
         fi
     fi
 
-    # Check CONTCAR and copy to POSCAR
-    local contcar_empty=false
+    # Check CONTCAR validity
     if [ -f "CONTCAR" ]; then
-        # Check if CONTCAR is empty or has only a few lines (header only)
         local line_count=$(wc -l < "CONTCAR" 2>/dev/null || echo 0)
-        if [ "$line_count" -lt 8 ]; then
-            contcar_empty=true
-            echo "  ⚠ CONTCAR is empty or incomplete, will use original structure and change ALGO to Fast"
+        if [ "$line_count" -ge 8 ]; then
+            # Check if CONTCAR has actual atomic coordinates (not all zeros)
+            if tail -n +8 "CONTCAR" | grep -q "[1-9]" 2>/dev/null; then
+                contcar_valid=true
+                echo "  ✓ Valid CONTCAR found (${line_count} lines)"
+            else
+                echo "  ⚠ CONTCAR exists but appears empty/invalid"
+            fi
         else
-            cp CONTCAR POSCAR
-            echo "  ✓ Copied CONTCAR to POSCAR"
+            echo "  ⚠ CONTCAR is incomplete (${line_count} lines)"
         fi
     else
-        contcar_empty=true
-        echo "  ⚠ CONTCAR not found, will use original structure and change ALGO to Fast"
+        echo "  ⚠ No CONTCAR found"
     fi
 
-    # If CONTCAR is empty or failed, modify INCAR to use ALGO=Fast
-    if [ "$contcar_empty" = true ] || [ "$calc_failed" = true ]; then
-        if [ -f "INCAR" ]; then
-            # Change ALGO from Normal to Fast (or add if not present)
-            if grep -q "^[[:space:]]*ALGO" "INCAR"; then
-                sed -i 's/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Fast/' "INCAR"
-                echo "  ✓ Changed ALGO to Fast in INCAR"
-            else
-                echo "ALGO = Fast" >> "INCAR"
-                echo "  ✓ Added ALGO = Fast to INCAR"
-            fi
-        fi
+    # Backup original files before resubmission
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    if [ -f "POSCAR" ]; then
+        cp POSCAR POSCAR.backup.$timestamp
+    fi
+    if [ -f "INCAR" ]; then
+        cp INCAR INCAR.backup.$timestamp
     fi
 
-    # Find the structure file (*.vasp)
-    structure_file=$(find . -maxdepth 1 -name "*.vasp" | head -1)
+    # Decide which structure to use
+    if [ "$contcar_valid" = true ] && [ "$calc_failed" = false ]; then
+        # Use CONTCAR to continue calculation
+        cp CONTCAR POSCAR
+        echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
+    else
+        # Use original structure with ALGO=Fast
+        use_algo_fast=true
 
-    if [ -z "$structure_file" ]; then
-        # If no .vasp file found, use POSCAR
-        if [ -f "POSCAR" ]; then
-            structure_file="POSCAR"
+        # Find original structure file
+        structure_file=$(find . -maxdepth 1 -name "*.vasp" | head -1)
+
+        if [ -n "$structure_file" ]; then
+            cp "$structure_file" POSCAR
+            echo -e "  ${CYAN}→ Restarting from original structure (.vasp)${NC}"
+        elif [ -f "POSCAR.backup.$timestamp" ]; then
+            # Keep the existing POSCAR (which was just backed up)
+            echo -e "  ${CYAN}→ Using existing POSCAR${NC}"
         else
-            echo -e "  ${RED}✗ No structure file found${NC}"
-            cd - > /dev/null
+            echo -e "  ${RED}✗ No valid structure file found${NC}"
+            cd "$original_dir"
             return 1
         fi
     fi
 
-    # Create a temporary directory for mpjob output to avoid directory conflict
-    local temp_outdir="temp_mpjob_$$"
-    mkdir -p "$temp_outdir"
-
-    # Copy structure file to temp directory
-    cp "$(basename $structure_file)" "$temp_outdir/"
-
-    # Copy INCAR if it exists (to preserve ALGO changes)
-    if [ -f "INCAR" ]; then
-        cp "INCAR" "$temp_outdir/"
+    # Modify INCAR if needed
+    if [ "$use_algo_fast" = true ] && [ -f "INCAR" ]; then
+        if grep -q "^[[:space:]]*ALGO" "INCAR"; then
+            sed -i 's/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Fast/' "INCAR"
+            echo "  ✓ Changed ALGO to Fast in INCAR"
+        else
+            echo "ALGO = Fast" >> "INCAR"
+            echo "  ✓ Added ALGO = Fast to INCAR"
+        fi
     fi
 
-    # Construct mpjob command in temp directory
-    local mpjob_cmd="mpjob $(basename $structure_file) -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
+    # Submit the job (mpjob will create nested directory structure)
+    local mpjob_cmd="mpjob POSCAR -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
     # Add custom parameters if specified
     if [ -n "$CUSTOM_PARAMS" ]; then
@@ -127,27 +177,20 @@ resubmit_running_job() {
     # Add job name
     mpjob_cmd="$mpjob_cmd --name $structure_name"
 
-    # Submit job from temp directory
+    # Submit job
     echo "  Running: $mpjob_cmd"
-    cd "$temp_outdir"
     eval $mpjob_cmd
     local submit_status=$?
-    cd - > /dev/null
 
     if [ $submit_status -eq 0 ]; then
-        # Copy generated files back from temp directory
-        cp -r "$temp_outdir"/* .
         echo -e "  ${GREEN}✓ Successfully resubmitted${NC}"
         running_resubmitted=$((running_resubmitted + 1))
     else
-        echo -e "  ${RED}✗ Failed to resubmit${NC}"
+        echo -e "  ${RED}✗ Failed to resubmit (exit code: $submit_status)${NC}"
         failed_resubmits=$((failed_resubmits + 1))
     fi
 
-    # Clean up temp directory
-    rm -rf "$temp_outdir"
-
-    cd - > /dev/null
+    cd "$original_dir"
     echo "----------------------------------------"
 }
 
@@ -161,6 +204,7 @@ submit_pending_job() {
 
     echo -e "${BLUE}Submitting PENDING job: ${job_name}${NC}"
 
+    local original_dir=$(pwd)
     cd "$calc_dir" || return 1
 
     # Find the structure file (*.vasp)
@@ -168,7 +212,7 @@ submit_pending_job() {
 
     if [ -z "$structure_file" ]; then
         echo -e "  ${RED}✗ No structure file found${NC}"
-        cd - > /dev/null
+        cd "$original_dir"
         return 1
     fi
 
@@ -186,16 +230,17 @@ submit_pending_job() {
     # Submit job
     echo "  Running: $mpjob_cmd"
     eval $mpjob_cmd
+    local submit_status=$?
 
-    if [ $? -eq 0 ]; then
+    if [ $submit_status -eq 0 ]; then
         echo -e "  ${GREEN}✓ Successfully submitted${NC}"
         pending_submitted=$((pending_submitted + 1))
     else
-        echo -e "  ${RED}✗ Failed to submit${NC}"
+        echo -e "  ${RED}✗ Failed to submit (exit code: $submit_status)${NC}"
         failed_resubmits=$((failed_resubmits + 1))
     fi
 
-    cd - > /dev/null
+    cd "$original_dir"
     echo "----------------------------------------"
 }
 
@@ -240,21 +285,41 @@ for structure_dir in "$CALC_DIR"/*/; do
             total_jobs=$((total_jobs + 1))
             job_name="$structure_name/$(basename "$calc_dir")"
 
-            # Determine job status
+            # Determine job status with better detection
             status=""
-            if [ -f "$calc_dir/CONTCAR" ] && [ -f "$calc_dir/OUTCAR" ]; then
+            if [ -f "$calc_dir/OUTCAR" ]; then
                 # Check if calculation completed successfully
                 if grep -q "reached required accuracy" "$calc_dir/OUTCAR" 2>/dev/null; then
                     status="COMPLETED"
+                # Check for fatal errors
                 elif grep -q "ZBRENT: fatal error" "$calc_dir/OUTCAR" 2>/dev/null || \
                      grep -q "ERROR" "$calc_dir/OUTCAR" 2>/dev/null; then
                     status="FAILED"
+                # Check if hit wall time (incomplete but has OUTCAR)
+                elif check_wall_time "$calc_dir/OUTCAR"; then
+                    status="INCOMPLETE"
+                # Has OUTCAR but not completed - might be still running or incomplete
                 else
-                    status="RUNNING"
+                    # Check if CONTCAR exists and is valid
+                    if [ -f "$calc_dir/CONTCAR" ]; then
+                        local line_count=$(wc -l < "$calc_dir/CONTCAR" 2>/dev/null || echo 0)
+                        if [ "$line_count" -ge 8 ]; then
+                            # Has valid CONTCAR but not completed - likely incomplete
+                            status="INCOMPLETE"
+                        else
+                            status="RUNNING"
+                        fi
+                    else
+                        status="RUNNING"
+                    fi
                 fi
             elif [ -f "$calc_dir/INCAR" ]; then
-                # INCAR exists but no OUTCAR yet
-                status="RUNNING"
+                # INCAR exists but no OUTCAR yet - could be pending or just started
+                if [ -f "$calc_dir/POSCAR" ] || [ -f "$calc_dir"/*.vasp ]; then
+                    status="RUNNING"
+                else
+                    status="PENDING"
+                fi
             else
                 # Job not started
                 status="PENDING"
@@ -262,13 +327,20 @@ for structure_dir in "$CALC_DIR"/*/; do
 
             # Process based on status
             case "$status" in
-                RUNNING|FAILED)
-                    # Both running and failed jobs should be resubmitted
-                    # Failed jobs will have ALGO changed to Fast automatically
+                INCOMPLETE|RUNNING|FAILED)
+                    # Resubmit incomplete, running, and failed jobs
+                    # The function will handle each case appropriately:
+                    # - INCOMPLETE with valid CONTCAR: continue from CONTCAR
+                    # - FAILED: restart with ALGO=Fast
+                    # - RUNNING with empty CONTCAR: restart with ALGO=Fast
                     resubmit_running_job "$calc_dir" "$structure_name" "$job_name"
                     ;;
                 PENDING)
                     submit_pending_job "$calc_dir" "$structure_name" "$job_name"
+                    ;;
+                COMPLETED)
+                    skipped_jobs=$((skipped_jobs + 1))
+                    echo -e "${GREEN}✓ Skipping completed job: ${job_name}${NC}"
                     ;;
                 *)
                     skipped_jobs=$((skipped_jobs + 1))
@@ -282,10 +354,14 @@ echo ""
 echo "============================================================================"
 echo "Resubmission Summary"
 echo "============================================================================"
-echo -e "Total jobs scanned:       ${total_jobs}"
-echo -e "Running jobs resubmitted: ${YELLOW}${running_resubmitted}${NC}"
-echo -e "Pending jobs submitted:   ${BLUE}${pending_submitted}${NC}"
-echo -e "Skipped (completed/failed): ${skipped_jobs}"
-echo -e "Failed to resubmit:       ${RED}${failed_resubmits}${NC}"
+echo -e "Total jobs scanned:           ${total_jobs}"
+echo -e "Incomplete jobs resubmitted:  ${YELLOW}${running_resubmitted}${NC}"
+echo -e "  ↳ (includes wall-time limited, failed, and incomplete jobs)"
+echo -e "Pending jobs submitted:       ${BLUE}${pending_submitted}${NC}"
+echo -e "Skipped (already completed):  ${GREEN}${skipped_jobs}${NC}"
+if [ $failed_resubmits -gt 0 ]; then
+    echo -e "Failed to resubmit:           ${RED}${failed_resubmits}${NC}"
+    echo -e "  ⚠ Check mpjob errors above for details"
+fi
 echo "============================================================================"
 echo ""
