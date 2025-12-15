@@ -26,11 +26,10 @@ echo "==========================================================================
 echo "Continue Job Submission (INCOMPLETE + RUNNING + PENDING)"
 echo "============================================================================"
 echo "Smart resubmission features:"
-echo "  • Detects wall time limits and continues from CONTCAR"
-echo "  • Progressive recovery: POTIM=0.2 → ALGO=Veryfast"
-echo "  • Intelligently validates CONTCAR before using"
-echo "  • Backs up files before resubmission"
-echo "  • Resubmits pending jobs automatically"
+echo "  • Progressive recovery: POTIM=0.2 → ALGO=Veryfast (for all incomplete)"
+echo "  • Auto-detects Th/U elements and sets magmoms for pending jobs"
+echo "  • Skips completed jobs"
+echo "  • All incomplete/running/failed jobs treated as failures needing recovery"
 echo "============================================================================"
 echo ""
 
@@ -45,29 +44,6 @@ running_resubmitted=0
 pending_submitted=0
 skipped_jobs=0
 failed_resubmits=0
-
-################################################################################
-# Function to check if calculation hit wall time limit
-################################################################################
-check_wall_time() {
-    local outcar_file="$1"
-
-    if [ ! -f "$outcar_file" ]; then
-        return 1  # No OUTCAR, can't determine
-    fi
-
-    # Check for common wall time indicators
-    if grep -q "STOPCAR" "$outcar_file" 2>/dev/null || \
-       grep -q "walltime" "$outcar_file" 2>/dev/null || \
-       tail -20 "$outcar_file" | grep -q "reached required accuracy" -v 2>/dev/null; then
-        # Check if it's NOT completed successfully
-        if ! grep -q "reached required accuracy" "$outcar_file" 2>/dev/null; then
-            return 0  # Hit wall time
-        fi
-    fi
-
-    return 1  # Did not hit wall time
-}
 
 ################################################################################
 # Recovery tracking functions
@@ -86,6 +62,33 @@ get_recovery_stage() {
     fi
 }
 
+# Check if structure contains Th or U elements and return magmom settings
+check_special_elements() {
+    local structure_file=$1
+    local magmom_params=""
+
+    if [ ! -f "$structure_file" ]; then
+        echo ""
+        return
+    fi
+
+    # Check for Th (Thorium) or U (Uranium) in the structure file
+    if grep -q "Th" "$structure_file" || grep -q "U" "$structure_file"; then
+        # Set appropriate magmoms for actinides
+        # Th: typically non-magnetic (0)
+        # U: typically magnetic (2-3 μB)
+        if grep -q "Th" "$structure_file" && grep -q "U" "$structure_file"; then
+            magmom_params="MAGMOM={Th:0,U:2.5}"
+        elif grep -q "Th" "$structure_file"; then
+            magmom_params="MAGMOM={Th:0}"
+        elif grep -q "U" "$structure_file"; then
+            magmom_params="MAGMOM={U:2.5}"
+        fi
+    fi
+
+    echo "$magmom_params"
+}
+
 ################################################################################
 # Function to resubmit a running/incomplete job using mpjob -j
 ################################################################################
@@ -97,87 +100,33 @@ resubmit_running_job() {
 
     echo -e "${YELLOW}Resubmitting ${status} job: ${job_name}${NC}"
 
-    # Analyze calculation status without changing directory
-    local calc_failed=false
-    local hit_wall_time=false
-    local contcar_valid=false
-
-    # Check if calculation failed with errors
-    if [ -f "$calc_dir/OUTCAR" ]; then
-        if grep -q "ZBRENT: fatal error" "$calc_dir/OUTCAR" 2>/dev/null || \
-           grep -q "ERROR" "$calc_dir/OUTCAR" 2>/dev/null; then
-            calc_failed=true
-            echo "  ⚠ Calculation failed with errors"
-        fi
-
-        # Check for wall time limit
-        if check_wall_time "$calc_dir/OUTCAR"; then
-            hit_wall_time=true
-            echo "  ⏱ Calculation hit wall time limit"
-        fi
-    fi
-
-    # Check CONTCAR validity
-    if [ -f "$calc_dir/CONTCAR" ]; then
-        local line_count=$(wc -l < "$calc_dir/CONTCAR" 2>/dev/null || echo 0)
-        if [ "$line_count" -ge 8 ]; then
-            # Check if CONTCAR has actual atomic coordinates (not all zeros)
-            if tail -n +8 "$calc_dir/CONTCAR" | grep -q "[1-9]" 2>/dev/null; then
-                contcar_valid=true
-                echo "  ✓ Valid CONTCAR found (${line_count} lines)"
-            else
-                echo "  ⚠ CONTCAR exists but appears empty/invalid"
-            fi
-        else
-            echo "  ⚠ CONTCAR is incomplete (${line_count} lines)"
-        fi
-    else
-        echo "  ⚠ No CONTCAR found"
-    fi
-
-    # Progressive recovery strategy for failed and running jobs
-    # RUNNING jobs are also failed (errors in mp_flow.out, not in OUTCAR)
+    # All incomplete/running/failed jobs are treated as failures requiring recovery
+    # No wall-time limits for small systems - all need progressive recovery
     local recovery_params=""
-    if [ "$calc_failed" = true ] || [ "$status" = "RUNNING" ]; then
-        local recovery_stage=$(get_recovery_stage "$calc_dir")
-        echo "  Recovery stage: $recovery_stage"
+    local recovery_stage=$(get_recovery_stage "$calc_dir")
+    echo "  Recovery stage: $recovery_stage"
 
-        case "$recovery_stage" in
-            none)
-                # First recovery attempt: Add POTIM = 0.2
-                echo -e "  ${CYAN}→ Applying recovery strategy 1: POTIM=0.2${NC}"
-                recovery_params="POTIM=0.2"
-                touch "$calc_dir/.recovery_potim"
-                echo "  ✓ Created recovery marker: .recovery_potim"
-                ;;
-            potim_tried)
-                # Second recovery attempt: Change ALGO to Veryfast (keep POTIM)
-                echo -e "  ${CYAN}→ Applying recovery strategy 2: POTIM=0.2,ALGO=Veryfast${NC}"
-                recovery_params="POTIM=0.2,ALGO=Veryfast"
-                touch "$calc_dir/.recovery_algo"
-                echo "  ✓ Created recovery marker: .recovery_algo"
-                ;;
-            algo_tried)
-                # Both recovery strategies tried, continue using both parameters
-                echo -e "  ${CYAN}→ Both recovery strategies already tried, using POTIM=0.2,ALGO=Veryfast${NC}"
-                recovery_params="POTIM=0.2,ALGO=Veryfast"
-                ;;
-        esac
-    fi
-
-    # Prepare for continuation
-    if [ "$contcar_valid" = true ] && [ "$hit_wall_time" = true ]; then
-        # Only continue from CONTCAR if hit wall time (not for failed/running jobs)
-        cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
-        echo -e "  ${CYAN}→ Continuing from CONTCAR (wall-time limited)${NC}"
-    elif [ "$contcar_valid" = true ] && [ "$calc_failed" = false ] && [ "$status" != "RUNNING" ] && [ "$status" = "INCOMPLETE" ]; then
-        # Continue from CONTCAR for incomplete but not failed or running calculations
-        cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
-        echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
-    else
-        # For FAILED and RUNNING jobs, don't use CONTCAR (restart from beginning with recovery strategy)
-        echo -e "  ${CYAN}→ Using existing POSCAR (restarting with recovery strategy)${NC}"
-    fi
+    case "$recovery_stage" in
+        none)
+            # First recovery attempt: Add POTIM = 0.2
+            echo -e "  ${CYAN}→ Applying recovery strategy 1: POTIM=0.2${NC}"
+            recovery_params="POTIM=0.2"
+            touch "$calc_dir/.recovery_potim"
+            echo "  ✓ Created recovery marker: .recovery_potim"
+            ;;
+        potim_tried)
+            # Second recovery attempt: Change ALGO to Veryfast (keep POTIM)
+            echo -e "  ${CYAN}→ Applying recovery strategy 2: POTIM=0.2,ALGO=Veryfast${NC}"
+            recovery_params="POTIM=0.2,ALGO=Veryfast"
+            touch "$calc_dir/.recovery_algo"
+            echo "  ✓ Created recovery marker: .recovery_algo"
+            ;;
+        algo_tried)
+            # Both recovery strategies tried, continue using both parameters
+            echo -e "  ${CYAN}→ Both recovery strategies already tried, using POTIM=0.2,ALGO=Veryfast${NC}"
+            recovery_params="POTIM=0.2,ALGO=Veryfast"
+            ;;
+    esac
 
     # Find the original structure file in the parent structure directory
     local structure_dir=$(dirname "$calc_dir")
@@ -265,12 +214,28 @@ submit_pending_job() {
         fi
     fi
 
+    # Check for special elements (Th, U) that need magmom settings
+    local special_params=$(check_special_elements "$structure_file")
+    if [ -n "$special_params" ]; then
+        echo "  ✓ Detected special elements, adding: $special_params"
+    fi
+
     # Construct mpjob command with explicit output directory
     local mpjob_cmd="mpjob \"$structure_file\" -o \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
-    # Add custom parameters if specified
-    if [ -n "$CUSTOM_PARAMS" ]; then
-        mpjob_cmd="$mpjob_cmd -c $CUSTOM_PARAMS"
+    # Combine custom parameters and special element parameters
+    local combined_params=""
+    if [ -n "$special_params" ] && [ -n "$CUSTOM_PARAMS" ]; then
+        combined_params="${special_params},${CUSTOM_PARAMS}"
+    elif [ -n "$special_params" ]; then
+        combined_params="$special_params"
+    elif [ -n "$CUSTOM_PARAMS" ]; then
+        combined_params="$CUSTOM_PARAMS"
+    fi
+
+    # Add combined custom parameters if any
+    if [ -n "$combined_params" ]; then
+        mpjob_cmd="$mpjob_cmd -c $combined_params"
     fi
 
     # Add job name
@@ -376,15 +341,15 @@ for structure_dir in "$CALC_DIR"/*/; do
             # Process based on status
             case "$status" in
                 INCOMPLETE|RUNNING|FAILED)
-                    # Resubmit incomplete, running, and failed jobs
-                    # The function will handle each case appropriately:
-                    # - INCOMPLETE with valid CONTCAR: continue from CONTCAR
-                    # - FAILED: progressive recovery (POTIM=0.2 → ALGO=Veryfast)
-                    # - RUNNING: progressive recovery (errors in mp_flow.out, not OUTCAR)
+                    # All incomplete/running/failed jobs are treated as failures
+                    # Apply progressive recovery strategy:
+                    # - Stage 1: POTIM=0.2
+                    # - Stage 2: POTIM=0.2,ALGO=Veryfast
+                    # - Stage 3: Continue with both parameters
                     resubmit_running_job "$calc_dir" "$structure_name" "$job_name" "$status"
                     ;;
                 PENDING)
-                    # Submit pending jobs that haven't been started yet
+                    # Submit pending jobs with auto-detection of Th/U for magmom settings
                     submit_pending_job "$calc_dir" "$structure_name" "$job_name"
                     ;;
                 COMPLETED)
