@@ -140,8 +140,9 @@ resubmit_running_job() {
     local calc_dir=$1
     local structure_name=$2
     local job_name=$3
+    local status=$4
 
-    echo -e "${YELLOW}Resubmitting INCOMPLETE job: ${job_name}${NC}"
+    echo -e "${YELLOW}Resubmitting ${status} job: ${job_name}${NC}"
 
     # Analyze calculation status without changing directory
     local calc_failed=false
@@ -181,8 +182,9 @@ resubmit_running_job() {
         echo "  ⚠ No CONTCAR found"
     fi
 
-    # Progressive recovery strategy for failed jobs
-    if [ "$calc_failed" = true ]; then
+    # Progressive recovery strategy for failed and running jobs
+    # RUNNING jobs are also failed (errors in mp_flow.out, not in OUTCAR)
+    if [ "$calc_failed" = true ] || [ "$status" = "RUNNING" ]; then
         local recovery_stage=$(get_recovery_stage "$calc_dir")
         echo "  Recovery stage: $recovery_stage"
 
@@ -214,15 +216,16 @@ resubmit_running_job() {
 
     # Prepare for continuation
     if [ "$contcar_valid" = true ] && [ "$hit_wall_time" = true ]; then
-        # Only continue from CONTCAR if hit wall time (not for failed calculations)
+        # Only continue from CONTCAR if hit wall time (not for failed/running jobs)
         cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
-        echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
-    elif [ "$contcar_valid" = true ] && [ "$calc_failed" = false ]; then
-        # Continue from CONTCAR for incomplete but not failed calculations
+        echo -e "  ${CYAN}→ Continuing from CONTCAR (wall-time limited)${NC}"
+    elif [ "$contcar_valid" = true ] && [ "$calc_failed" = false ] && [ "$status" != "RUNNING" ] && [ "$status" = "INCOMPLETE" ]; then
+        # Continue from CONTCAR for incomplete but not failed or running calculations
         cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
         echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
     else
-        echo -e "  ${CYAN}→ Using existing POSCAR${NC}"
+        # For FAILED and RUNNING jobs, don't use CONTCAR (restart from beginning with recovery strategy)
+        echo -e "  ${CYAN}→ Using existing POSCAR (restarting with recovery strategy)${NC}"
     fi
 
     # Find the original structure file in the parent structure directory
@@ -417,8 +420,8 @@ for structure_dir in "$CALC_DIR"/*/; do
                     # The function will handle each case appropriately:
                     # - INCOMPLETE with valid CONTCAR: continue from CONTCAR
                     # - FAILED: progressive recovery (POTIM=0.2 → ALGO=Veryfast)
-                    # - RUNNING with empty CONTCAR: resubmit
-                    resubmit_running_job "$calc_dir" "$structure_name" "$job_name"
+                    # - RUNNING: progressive recovery (errors in mp_flow.out, not OUTCAR)
+                    resubmit_running_job "$calc_dir" "$structure_name" "$job_name" "$status"
                     ;;
                 PENDING)
                     # Submit pending jobs that haven't been started yet
