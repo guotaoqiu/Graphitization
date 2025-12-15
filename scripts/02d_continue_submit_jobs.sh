@@ -27,9 +27,10 @@ echo "Continue Job Submission (INCOMPLETE + RUNNING + PENDING)"
 echo "============================================================================"
 echo "Smart resubmission features:"
 echo "  • Detects wall time limits and continues from CONTCAR"
-echo "  • Handles failed calculations with ALGO=Fast"
+echo "  • Progressive recovery: POTIM=0.2 → ALGO=Veryfast"
 echo "  • Intelligently validates CONTCAR before using"
 echo "  • Backs up files before resubmission"
+echo "  • Resubmits pending jobs automatically"
 echo "============================================================================"
 echo ""
 
@@ -66,6 +67,70 @@ check_wall_time() {
     fi
 
     return 1  # Did not hit wall time
+}
+
+################################################################################
+# Recovery tracking functions
+################################################################################
+
+# Check recovery stage based on marker files
+get_recovery_stage() {
+    local calc_dir=$1
+
+    if [ -f "$calc_dir/.recovery_algo" ]; then
+        echo "algo_tried"
+    elif [ -f "$calc_dir/.recovery_potim" ]; then
+        echo "potim_tried"
+    else
+        echo "none"
+    fi
+}
+
+# Add or update POTIM in INCAR
+add_potim_to_incar() {
+    local incar_file=$1
+    local potim_value=${2:-0.2}
+
+    if [ ! -f "$incar_file" ]; then
+        echo "  ⚠ INCAR file not found: $incar_file"
+        return 1
+    fi
+
+    # Check if POTIM already exists
+    if grep -q "^[[:space:]]*POTIM" "$incar_file"; then
+        # Update existing POTIM
+        sed -i "s/^[[:space:]]*POTIM[[:space:]]*=.*/POTIM = $potim_value/" "$incar_file"
+        echo "  ✓ Updated POTIM = $potim_value in INCAR"
+    else
+        # Add POTIM to INCAR
+        echo "POTIM = $potim_value" >> "$incar_file"
+        echo "  ✓ Added POTIM = $potim_value to INCAR"
+    fi
+
+    return 0
+}
+
+# Change ALGO to Veryfast in INCAR
+change_algo_to_veryfast() {
+    local incar_file=$1
+
+    if [ ! -f "$incar_file" ]; then
+        echo "  ⚠ INCAR file not found: $incar_file"
+        return 1
+    fi
+
+    # Check if ALGO exists
+    if grep -q "^[[:space:]]*ALGO" "$incar_file"; then
+        # Update existing ALGO
+        sed -i "s/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Veryfast/" "$incar_file"
+        echo "  ✓ Changed ALGO = Veryfast in INCAR"
+    else
+        # Add ALGO to INCAR
+        echo "ALGO = Veryfast" >> "$incar_file"
+        echo "  ✓ Added ALGO = Veryfast to INCAR"
+    fi
+
+    return 0
 }
 
 ################################################################################
@@ -116,9 +181,44 @@ resubmit_running_job() {
         echo "  ⚠ No CONTCAR found"
     fi
 
+    # Progressive recovery strategy for failed jobs
+    if [ "$calc_failed" = true ]; then
+        local recovery_stage=$(get_recovery_stage "$calc_dir")
+        echo "  Recovery stage: $recovery_stage"
+
+        case "$recovery_stage" in
+            none)
+                # First recovery attempt: Add POTIM = 0.2
+                echo -e "  ${CYAN}→ Applying recovery strategy 1: POTIM = 0.2${NC}"
+                if [ -f "$calc_dir/INCAR" ]; then
+                    add_potim_to_incar "$calc_dir/INCAR" 0.2
+                    touch "$calc_dir/.recovery_potim"
+                    echo "  ✓ Created recovery marker: .recovery_potim"
+                fi
+                ;;
+            potim_tried)
+                # Second recovery attempt: Change ALGO to Veryfast
+                echo -e "  ${CYAN}→ Applying recovery strategy 2: ALGO = Veryfast${NC}"
+                if [ -f "$calc_dir/INCAR" ]; then
+                    change_algo_to_veryfast "$calc_dir/INCAR"
+                    touch "$calc_dir/.recovery_algo"
+                    echo "  ✓ Created recovery marker: .recovery_algo"
+                fi
+                ;;
+            algo_tried)
+                # Both recovery strategies tried, just resubmit
+                echo -e "  ${CYAN}→ Both recovery strategies already tried, resubmitting...${NC}"
+                ;;
+        esac
+    fi
+
     # Prepare for continuation
-    if [ "$contcar_valid" = true ]; then
-        # Copy CONTCAR to POSCAR for continuation
+    if [ "$contcar_valid" = true ] && [ "$hit_wall_time" = true ]; then
+        # Only continue from CONTCAR if hit wall time (not for failed calculations)
+        cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
+        echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
+    elif [ "$contcar_valid" = true ] && [ "$calc_failed" = false ]; then
+        # Continue from CONTCAR for incomplete but not failed calculations
         cp "$calc_dir/CONTCAR" "$calc_dir/POSCAR"
         echo -e "  ${CYAN}→ Continuing from CONTCAR${NC}"
     else
@@ -316,11 +416,12 @@ for structure_dir in "$CALC_DIR"/*/; do
                     # Resubmit incomplete, running, and failed jobs
                     # The function will handle each case appropriately:
                     # - INCOMPLETE with valid CONTCAR: continue from CONTCAR
-                    # - FAILED: restart with ALGO=Fast
-                    # - RUNNING with empty CONTCAR: restart with ALGO=Fast
+                    # - FAILED: progressive recovery (POTIM=0.2 → ALGO=Veryfast)
+                    # - RUNNING with empty CONTCAR: resubmit
                     resubmit_running_job "$calc_dir" "$structure_name" "$job_name"
                     ;;
                 PENDING)
+                    # Submit pending jobs that haven't been started yet
                     submit_pending_job "$calc_dir" "$structure_name" "$job_name"
                     ;;
                 COMPLETED)
