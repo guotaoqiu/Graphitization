@@ -86,53 +86,6 @@ get_recovery_stage() {
     fi
 }
 
-# Add or update POTIM in INCAR
-add_potim_to_incar() {
-    local incar_file=$1
-    local potim_value=${2:-0.2}
-
-    if [ ! -f "$incar_file" ]; then
-        echo "  ⚠ INCAR file not found: $incar_file"
-        return 1
-    fi
-
-    # Check if POTIM already exists
-    if grep -q "^[[:space:]]*POTIM" "$incar_file"; then
-        # Update existing POTIM
-        sed -i "s/^[[:space:]]*POTIM[[:space:]]*=.*/POTIM = $potim_value/" "$incar_file"
-        echo "  ✓ Updated POTIM = $potim_value in INCAR"
-    else
-        # Add POTIM to INCAR
-        echo "POTIM = $potim_value" >> "$incar_file"
-        echo "  ✓ Added POTIM = $potim_value to INCAR"
-    fi
-
-    return 0
-}
-
-# Change ALGO to Veryfast in INCAR
-change_algo_to_veryfast() {
-    local incar_file=$1
-
-    if [ ! -f "$incar_file" ]; then
-        echo "  ⚠ INCAR file not found: $incar_file"
-        return 1
-    fi
-
-    # Check if ALGO exists
-    if grep -q "^[[:space:]]*ALGO" "$incar_file"; then
-        # Update existing ALGO
-        sed -i "s/^[[:space:]]*ALGO[[:space:]]*=.*/ALGO = Veryfast/" "$incar_file"
-        echo "  ✓ Changed ALGO = Veryfast in INCAR"
-    else
-        # Add ALGO to INCAR
-        echo "ALGO = Veryfast" >> "$incar_file"
-        echo "  ✓ Added ALGO = Veryfast to INCAR"
-    fi
-
-    return 0
-}
-
 ################################################################################
 # Function to resubmit a running/incomplete job using mpjob -j
 ################################################################################
@@ -184,6 +137,7 @@ resubmit_running_job() {
 
     # Progressive recovery strategy for failed and running jobs
     # RUNNING jobs are also failed (errors in mp_flow.out, not in OUTCAR)
+    local recovery_params=""
     if [ "$calc_failed" = true ] || [ "$status" = "RUNNING" ]; then
         local recovery_stage=$(get_recovery_stage "$calc_dir")
         echo "  Recovery stage: $recovery_stage"
@@ -191,25 +145,22 @@ resubmit_running_job() {
         case "$recovery_stage" in
             none)
                 # First recovery attempt: Add POTIM = 0.2
-                echo -e "  ${CYAN}→ Applying recovery strategy 1: POTIM = 0.2${NC}"
-                if [ -f "$calc_dir/INCAR" ]; then
-                    add_potim_to_incar "$calc_dir/INCAR" 0.2
-                    touch "$calc_dir/.recovery_potim"
-                    echo "  ✓ Created recovery marker: .recovery_potim"
-                fi
+                echo -e "  ${CYAN}→ Applying recovery strategy 1: POTIM=0.2${NC}"
+                recovery_params="POTIM=0.2"
+                touch "$calc_dir/.recovery_potim"
+                echo "  ✓ Created recovery marker: .recovery_potim"
                 ;;
             potim_tried)
-                # Second recovery attempt: Change ALGO to Veryfast
-                echo -e "  ${CYAN}→ Applying recovery strategy 2: ALGO = Veryfast${NC}"
-                if [ -f "$calc_dir/INCAR" ]; then
-                    change_algo_to_veryfast "$calc_dir/INCAR"
-                    touch "$calc_dir/.recovery_algo"
-                    echo "  ✓ Created recovery marker: .recovery_algo"
-                fi
+                # Second recovery attempt: Change ALGO to Veryfast (keep POTIM)
+                echo -e "  ${CYAN}→ Applying recovery strategy 2: POTIM=0.2,ALGO=Veryfast${NC}"
+                recovery_params="POTIM=0.2,ALGO=Veryfast"
+                touch "$calc_dir/.recovery_algo"
+                echo "  ✓ Created recovery marker: .recovery_algo"
                 ;;
             algo_tried)
-                # Both recovery strategies tried, just resubmit
-                echo -e "  ${CYAN}→ Both recovery strategies already tried, resubmitting...${NC}"
+                # Both recovery strategies tried, continue using both parameters
+                echo -e "  ${CYAN}→ Both recovery strategies already tried, using POTIM=0.2,ALGO=Veryfast${NC}"
+                recovery_params="POTIM=0.2,ALGO=Veryfast"
                 ;;
         esac
     fi
@@ -249,12 +200,21 @@ resubmit_running_job() {
     fi
 
     # Build mpjob command using -j to continue from previous calculation
-    # The -m fast mode will automatically handle ALGO changes
     local mpjob_cmd="mpjob \"$structure_file\" -j \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
-    # Add custom parameters if specified
-    if [ -n "$CUSTOM_PARAMS" ]; then
-        mpjob_cmd="$mpjob_cmd -c $CUSTOM_PARAMS"
+    # Combine custom parameters and recovery parameters
+    local combined_params=""
+    if [ -n "$recovery_params" ] && [ -n "$CUSTOM_PARAMS" ]; then
+        combined_params="${recovery_params},${CUSTOM_PARAMS}"
+    elif [ -n "$recovery_params" ]; then
+        combined_params="$recovery_params"
+    elif [ -n "$CUSTOM_PARAMS" ]; then
+        combined_params="$CUSTOM_PARAMS"
+    fi
+
+    # Add combined custom parameters if any
+    if [ -n "$combined_params" ]; then
+        mpjob_cmd="$mpjob_cmd -c $combined_params"
     fi
 
     # Add job name
