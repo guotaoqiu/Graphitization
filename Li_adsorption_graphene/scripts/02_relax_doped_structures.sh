@@ -13,9 +13,9 @@ NCORES=64                  # Number of cores per job
 CUSTOM_PARAMS="ISIF=2,LDIPOL=.TRUE.,IDIPOL=3,IVDW=11"
 
 # Directories
-STRUCTURE_DIR="../01_doped_structures"
-CALC_DIR="../03_calculations/doped_relaxation"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+STRUCTURE_DIR="$SCRIPT_DIR/../01_doped_structures"
+CALC_DIR="$SCRIPT_DIR/../03_calculations/doped_relaxation"
 
 # Create calculation directory
 mkdir -p "$CALC_DIR"

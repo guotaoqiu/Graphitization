@@ -12,9 +12,9 @@ NCORES=64
 CUSTOM_PARAMS="ISIF=2,LDIPOL=.TRUE.,IDIPOL=3,IVDW=11"
 
 # Directories
-STRUCTURE_FILE="../00_initial_structure/POSCAR_REV.vasp"
-CALC_DIR="../03_calculations/pristine_relaxation"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+STRUCTURE_FILE="$SCRIPT_DIR/../00_initial_structure/POSCAR_REV.vasp"
+CALC_DIR="$SCRIPT_DIR/../03_calculations/pristine_relaxation"
 
 echo "================================================================================"
 echo "Pristine Graphene Relaxation"

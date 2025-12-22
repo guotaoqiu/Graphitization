@@ -3,9 +3,10 @@
 # Script to check the status of all calculations
 ################################################################################
 
-CALC_DIR_DOPED="../03_calculations/doped_relaxation"
-CALC_DIR_PRISTINE="../03_calculations/pristine_relaxation"
-CALC_DIR_ADSORPTION="../03_calculations/adsorption"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CALC_DIR_DOPED="$SCRIPT_DIR/../03_calculations/doped_relaxation"
+CALC_DIR_PRISTINE="$SCRIPT_DIR/../03_calculations/pristine_relaxation"
+CALC_DIR_ADSORPTION="$SCRIPT_DIR/../03_calculations/adsorption"
 
 echo "================================================================================"
 echo "Calculation Status Summary"

@@ -13,9 +13,9 @@ NCORES=64                  # Number of cores per job
 CUSTOM_PARAMS="ISIF=2,LDIPOL=.TRUE.,IDIPOL=3,IVDW=11"
 
 # Directories
-STRUCTURE_DIR="../02_adsorption_structures"
-CALC_DIR="../03_calculations/adsorption"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+STRUCTURE_DIR="$SCRIPT_DIR/../02_adsorption_structures"
+CALC_DIR="$SCRIPT_DIR/../03_calculations/adsorption"
 
 # Create calculation directory
 mkdir -p "$CALC_DIR"
