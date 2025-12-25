@@ -273,16 +273,15 @@ def main():
     SCRIPT_DIR = Path(__file__).resolve().parent
 
     # Configuration
-    CALC_DIR_DOPED = SCRIPT_DIR / ".." / "03_calculations" / "doped_relaxation"
-    UNRELAXED_DIR = SCRIPT_DIR / ".." / "01_doped_structures"
+    # mpjob creates calculation directories in the same location as input files
+    STRUCTURE_DIR = SCRIPT_DIR / ".." / "01_doped_structures"
     OUTPUT_DIR = SCRIPT_DIR / ".." / "02_adsorption_structures"
     ADSORPTION_HEIGHT = 2.0  # Å, initial Li height above graphene
 
     print("=" * 80)
     print("Li Adsorption Structure Generator")
     print("=" * 80)
-    print(f"Looking for relaxed structures in: {CALC_DIR_DOPED}")
-    print(f"Fallback to unrelaxed structures in: {UNRELAXED_DIR}")
+    print(f"Structure directory: {STRUCTURE_DIR}")
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"Li adsorption height: {ADSORPTION_HEIGHT} Å")
     print("=" * 80)
@@ -291,14 +290,15 @@ def main():
     using_relaxed = {}
 
     # Function to find CONTCAR in calculation directory
-    def find_relaxed_structure(calc_dir, structure_name):
-        """Find relaxed CONTCAR in mpjob output directory"""
-        # mpjob creates: calc_dir/structure_name/structure_name/task_type/CONTCAR
-        # Try both possible patterns
+    def find_relaxed_structure(structure_dir, structure_name):
+        """Find relaxed CONTCAR in mpjob output directory
+
+        mpjob creates: structure_dir/structure_name/PBE_U_relax/CONTCAR
+        where structure_dir contains both the .vasp input and the output folder
+        """
         patterns = [
-            Path(calc_dir) / structure_name / structure_name / "PBE_U_relax" / "CONTCAR",
-            Path(calc_dir) / structure_name / structure_name / "u_relax" / "CONTCAR",
-            Path(calc_dir) / structure_name / "CONTCAR",  # Fallback
+            Path(structure_dir) / structure_name / "PBE_U_relax" / "CONTCAR",
+            Path(structure_dir) / structure_name / "u_relax" / "CONTCAR",
         ]
         for contcar_path in patterns:
             if contcar_path.exists():
@@ -315,13 +315,14 @@ def main():
     print("-" * 80)
 
     # Look for pristine structure (relaxed or unrelaxed)
-    pristine_relaxed = find_relaxed_structure(CALC_DIR_DOPED, "graphene_pristine")
-    pristine_unrelaxed = Path(UNRELAXED_DIR) / "graphene_pristine.vasp"
+    pristine_relaxed = find_relaxed_structure(STRUCTURE_DIR, "graphene_pristine")
+    pristine_unrelaxed = STRUCTURE_DIR / "graphene_pristine.vasp"
 
     if pristine_relaxed:
         structures['pristine'] = pristine_relaxed
         using_relaxed['pristine'] = True
-        print(f"✓ Pristine: Using RELAXED structure from {pristine_relaxed}")
+        print(f"✓ Pristine: Using RELAXED structure")
+        print(f"           {pristine_relaxed}")
     elif pristine_unrelaxed.exists():
         structures['pristine'] = str(pristine_unrelaxed)
         using_relaxed['pristine'] = False
@@ -330,15 +331,14 @@ def main():
         print(f"✗ Pristine: Not found")
 
     # Look for doped structures (relaxed or unrelaxed)
-    unrelaxed_dir = Path(UNRELAXED_DIR)
-    if unrelaxed_dir.exists():
-        for vasp_file in unrelaxed_dir.glob("graphene_*_doped.vasp"):
+    if STRUCTURE_DIR.exists():
+        for vasp_file in STRUCTURE_DIR.glob("graphene_*_doped.vasp"):
             # Extract dopant name
             dopant = vasp_file.stem.replace('graphene_', '').replace('_doped', '')
             structure_name = f"graphene_{dopant}_doped"
 
             # Try to find relaxed version
-            relaxed_path = find_relaxed_structure(CALC_DIR_DOPED, structure_name)
+            relaxed_path = find_relaxed_structure(STRUCTURE_DIR, structure_name)
 
             if relaxed_path:
                 structures[dopant] = relaxed_path
