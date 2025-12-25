@@ -268,60 +268,118 @@ class LiAdsorptionGenerator:
 def main():
     """Main function to generate Li adsorption structures"""
 
+    # Get script directory for absolute paths
+    import os
+    SCRIPT_DIR = Path(__file__).resolve().parent
+
     # Configuration
-    # Use relaxed doped structures as input (after running relaxation jobs)
-    # For initial setup, use the unrelaxed structures from 01_doped_structures
-    INPUT_DIR = "../01_doped_structures"  # Change to calculation dir after relaxation
-    OUTPUT_DIR = "../02_adsorption_structures"
+    CALC_DIR_DOPED = SCRIPT_DIR / ".." / "03_calculations" / "doped_relaxation"
+    UNRELAXED_DIR = SCRIPT_DIR / ".." / "01_doped_structures"
+    OUTPUT_DIR = SCRIPT_DIR / ".." / "02_adsorption_structures"
     ADSORPTION_HEIGHT = 2.0  # Å, initial Li height above graphene
 
     print("=" * 80)
     print("Li Adsorption Structure Generator")
     print("=" * 80)
-    print(f"Input directory: {INPUT_DIR}")
+    print(f"Looking for relaxed structures in: {CALC_DIR_DOPED}")
+    print(f"Fallback to unrelaxed structures in: {UNRELAXED_DIR}")
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"Li adsorption height: {ADSORPTION_HEIGHT} Å")
     print("=" * 80)
 
-    # Find all doped structure files
-    input_dir = Path(INPUT_DIR)
-    if not input_dir.exists():
-        print(f"\n✗ Error: {INPUT_DIR} not found!")
-        print("Please run 01_generate_doped_graphene.py first.")
-        return
-
     structures = {}
+    using_relaxed = {}
 
-    # Look for pristine structure
-    pristine_file = input_dir / "graphene_pristine.vasp"
-    if pristine_file.exists():
-        structures['pristine'] = str(pristine_file)
-        print(f"\n✓ Found pristine structure")
+    # Function to find CONTCAR in calculation directory
+    def find_relaxed_structure(calc_dir, structure_name):
+        """Find relaxed CONTCAR in mpjob output directory"""
+        # mpjob creates: calc_dir/structure_name/structure_name/task_type/CONTCAR
+        # Try both possible patterns
+        patterns = [
+            Path(calc_dir) / structure_name / structure_name / "PBE_U_relax" / "CONTCAR",
+            Path(calc_dir) / structure_name / structure_name / "u_relax" / "CONTCAR",
+            Path(calc_dir) / structure_name / "CONTCAR",  # Fallback
+        ]
+        for contcar_path in patterns:
+            if contcar_path.exists():
+                # Check if calculation completed
+                outcar = contcar_path.parent / "OUTCAR"
+                if outcar.exists():
+                    with open(outcar, 'r') as f:
+                        if 'reached required accuracy' in f.read():
+                            return str(contcar_path)
+        return None
+
+    print("\n" + "-" * 80)
+    print("Searching for structures...")
+    print("-" * 80)
+
+    # Look for pristine structure (relaxed or unrelaxed)
+    pristine_relaxed = find_relaxed_structure(CALC_DIR_DOPED, "graphene_pristine")
+    pristine_unrelaxed = Path(UNRELAXED_DIR) / "graphene_pristine.vasp"
+
+    if pristine_relaxed:
+        structures['pristine'] = pristine_relaxed
+        using_relaxed['pristine'] = True
+        print(f"✓ Pristine: Using RELAXED structure from {pristine_relaxed}")
+    elif pristine_unrelaxed.exists():
+        structures['pristine'] = str(pristine_unrelaxed)
+        using_relaxed['pristine'] = False
+        print(f"⚠ Pristine: Using UNRELAXED structure (relaxed not found)")
     else:
-        print(f"\n⚠ Warning: Pristine structure not found at {pristine_file}")
+        print(f"✗ Pristine: Not found")
 
-    # Look for doped structures
-    dopants_found = []
-    for vasp_file in input_dir.glob("graphene_*_doped.vasp"):
-        # Extract dopant name from filename: graphene_X_doped.vasp -> X
-        dopant = vasp_file.stem.replace('graphene_', '').replace('_doped', '')
-        structures[dopant] = str(vasp_file)
-        dopants_found.append(dopant)
+    # Look for doped structures (relaxed or unrelaxed)
+    unrelaxed_dir = Path(UNRELAXED_DIR)
+    if unrelaxed_dir.exists():
+        for vasp_file in unrelaxed_dir.glob("graphene_*_doped.vasp"):
+            # Extract dopant name
+            dopant = vasp_file.stem.replace('graphene_', '').replace('_doped', '')
+            structure_name = f"graphene_{dopant}_doped"
 
-    print(f"✓ Found {len(dopants_found)} doped structures: {', '.join(sorted(dopants_found))}")
+            # Try to find relaxed version
+            relaxed_path = find_relaxed_structure(CALC_DIR_DOPED, structure_name)
+
+            if relaxed_path:
+                structures[dopant] = relaxed_path
+                using_relaxed[dopant] = True
+                print(f"✓ {dopant:>3s}: Using RELAXED structure")
+            else:
+                structures[dopant] = str(vasp_file)
+                using_relaxed[dopant] = False
+                print(f"⚠ {dopant:>3s}: Using UNRELAXED structure (relaxed not found)")
 
     if not structures:
         print("\n✗ Error: No structure files found!")
         print("Please run 01_generate_doped_graphene.py first.")
         return
 
-    # Initialize generator
-    generator = LiAdsorptionGenerator(INPUT_DIR, OUTPUT_DIR, ADSORPTION_HEIGHT)
+    # Summary of structure sources
+    relaxed_count = sum(1 for v in using_relaxed.values() if v)
+    unrelaxed_count = sum(1 for v in using_relaxed.values() if not v)
+
+    print("\n" + "-" * 80)
+    print(f"Structure summary: {len(structures)} total ({relaxed_count} relaxed, {unrelaxed_count} unrelaxed)")
+    print("-" * 80)
+
+    if unrelaxed_count > 0:
+        print("\n⚠ WARNING: Some structures are unrelaxed!")
+        print("  For best accuracy, run relaxation calculations first:")
+        print("  ./02_relax_doped_structures.sh")
+        print("  Then re-run this script to use relaxed structures.")
+        print()
+
+    # Initialize generator (use OUTPUT_DIR for output, structures dict has input paths)
+    generator = LiAdsorptionGenerator(".", OUTPUT_DIR, ADSORPTION_HEIGHT)
 
     # Generate adsorption structures
     all_files = generator.process_all_structures(structures)
 
-    # Save metadata
+    # Save metadata (include relaxation status)
+    for meta in generator.metadata:
+        substrate_key = meta.get('dopant') if meta.get('dopant') else 'pristine'
+        meta['using_relaxed_structure'] = using_relaxed.get(substrate_key, False)
+
     generator.save_metadata()
 
     print("\n" + "=" * 80)
@@ -345,6 +403,11 @@ def main():
     print("\nAdsorption sites:")
     for site, count in sorted(site_counts.items()):
         print(f"  {site}: {count}")
+
+    # Relaxation status summary
+    print(f"\nStructure source:")
+    print(f"  Based on relaxed structures: {relaxed_count}")
+    print(f"  Based on unrelaxed structures: {unrelaxed_count}")
 
     print("=" * 80)
     print("\nNext steps:")
