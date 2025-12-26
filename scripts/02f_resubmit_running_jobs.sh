@@ -1,7 +1,7 @@
 #!/bin/bash
 ################################################################################
 # Resubmit Running/Failed/Pending Jobs Script
-# Backs up current calculation to _err folder and resubmits with custom params
+# Compresses failed calculations and restarts fresh with conservative params
 ################################################################################
 
 CALC_DIR="../02_calculations"
@@ -10,8 +10,8 @@ PARTITION="cu"                # Cluster partition
 NCORES=64                     # Number of cores per job
 MODE="native"                 # Calculation mode: fast, normal, native
 
-# Custom INCAR parameters
-CUSTOM_PARAMS="POTIM=0.02,ADDGRID=.T.,#NPAR,#KPAR"
+# Custom INCAR parameters - more conservative settings
+CUSTOM_PARAMS="POTIM=0.02,ADDGRID=.T."
 
 # Colors
 GREEN='\033[0;32m'
@@ -22,12 +22,13 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo "============================================================================"
-echo "Resubmit Running/Failed/Pending Jobs"
+echo "Resubmit Running/Failed/Pending Jobs (Fresh Restart)"
 echo "============================================================================"
 echo "This script will:"
-echo "  • Backup failed calculations to *_err directories"
-echo "  • Resubmit jobs with custom parameters: $CUSTOM_PARAMS"
+echo "  • Compress failed calculations to *.tar.gz"
+echo "  • Restart calculations fresh with: $CUSTOM_PARAMS"
 echo "  • Target: RUNNING, FAILED, and PENDING jobs only"
+echo "  • Skip: COMPLETED jobs"
 echo "============================================================================"
 echo ""
 
@@ -45,54 +46,30 @@ skipped_jobs=0
 failed_resubmits=0
 
 ################################################################################
-# Function to backup and resubmit a job
+# Function to compress and restart a job
 ################################################################################
-resubmit_job() {
+restart_job() {
     local calc_dir=$1
     local structure_name=$2
     local job_name=$3
     local status=$4
 
-    echo -e "${YELLOW}Resubmitting ${status} job: ${job_name}${NC}"
+    echo -e "${YELLOW}Restarting ${status} job: ${job_name}${NC}"
 
-    # Backup existing calculation directory if it's not pending
-    if [ "$status" != "PENDING" ]; then
-        # Remove trailing slash from calc_dir to avoid path issues
-        local calc_dir_clean="${calc_dir%/}"
-        local backup_dir="${calc_dir_clean}_err"
+    # Remove trailing slash from calc_dir
+    local calc_dir_clean="${calc_dir%/}"
 
-        if [ -d "$calc_dir" ]; then
-            # If backup already exists, append timestamp
-            if [ -d "$backup_dir" ]; then
-                local timestamp=$(date +%Y%m%d_%H%M%S)
-                backup_dir="${calc_dir_clean}_err_${timestamp}"
-            fi
-
-            echo "  Backing up to: $(basename "$backup_dir")"
-            cp -r "$calc_dir_clean" "$backup_dir"
-
-            if [ $? -eq 0 ]; then
-                echo -e "  ${GREEN}✓ Backup created successfully${NC}"
-            else
-                echo -e "  ${RED}✗ Backup failed${NC}"
-                echo "----------------------------------------"
-                return 1
-            fi
-        fi
-    fi
-
-    # Find the original structure file in the parent structure directory
-    local structure_dir=$(dirname "$calc_dir")
-    # Go up one more level if in nested structure (structure_name/structure_name/calc_type/)
+    # Get the parent structure directory (e.g., graphite_int_La_in_ring_6x6x1)
+    local structure_dir=$(dirname "$calc_dir_clean")
     if [ "$(basename "$structure_dir")" == "$structure_name" ]; then
         structure_dir=$(dirname "$structure_dir")
     fi
 
+    # Find the original structure file
     local structure_file=$(find "$structure_dir" -maxdepth 1 -name "*.vasp" | head -1)
-
     if [ -z "$structure_file" ]; then
-        # Try to use structure file from calc_dir
-        structure_file=$(find "$calc_dir" -maxdepth 1 -name "*.vasp" | head -1)
+        # Try to find in calc_dir
+        structure_file=$(find "$calc_dir_clean" -maxdepth 1 -name "*.vasp" | head -1)
         if [ -z "$structure_file" ]; then
             echo -e "  ${RED}✗ No structure file found${NC}"
             echo "----------------------------------------"
@@ -100,15 +77,42 @@ resubmit_job() {
         fi
     fi
 
-    # Build mpjob command
-    local mpjob_cmd=""
-    if [ "$status" == "PENDING" ]; then
-        # For pending jobs, use -o to specify output directory
-        mpjob_cmd="mpjob \"$structure_file\" -o \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
-    else
-        # For running/failed jobs, use -j to continue from previous calculation
-        mpjob_cmd="mpjob \"$structure_file\" -j \"$calc_dir\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
+    # Compress existing calculation directory if it exists and is not pending
+    if [ "$status" != "PENDING" ] && [ -d "$calc_dir_clean" ]; then
+        local tar_file="${calc_dir_clean}.tar.gz"
+
+        # If tar file already exists, append timestamp
+        if [ -f "$tar_file" ]; then
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            tar_file="${calc_dir_clean}_${timestamp}.tar.gz"
+        fi
+
+        echo "  Compressing to: $(basename "$tar_file")"
+        tar -czf "$tar_file" -C "$(dirname "$calc_dir_clean")" "$(basename "$calc_dir_clean")" 2>/dev/null
+
+        if [ $? -eq 0 ]; then
+            echo -e "  ${GREEN}✓ Compressed successfully${NC}"
+            # Remove the original directory after successful compression
+            rm -rf "$calc_dir_clean"
+            echo -e "  ${GREEN}✓ Removed original directory${NC}"
+        else
+            echo -e "  ${RED}✗ Compression failed${NC}"
+            echo "----------------------------------------"
+            return 1
+        fi
     fi
+
+    # Navigate to structure directory for fresh submission
+    local submit_dir="$structure_dir"
+    cd "$submit_dir" || {
+        echo -e "  ${RED}✗ Cannot navigate to structure directory${NC}"
+        echo "----------------------------------------"
+        return 1
+    }
+
+    # Construct mpjob command (same as batch script - fresh submission)
+    local structure_basename=$(basename "$structure_file")
+    local mpjob_cmd="mpjob \"$structure_basename\" -t $TASK_TYPE -p $PARTITION -n $NCORES -m $MODE"
 
     # Add custom parameters
     if [ -n "$CUSTOM_PARAMS" ]; then
@@ -122,6 +126,9 @@ resubmit_job() {
     echo "  Running: $mpjob_cmd"
     eval $mpjob_cmd
     local submit_status=$?
+
+    # Return to original directory
+    cd - > /dev/null
 
     if [ $submit_status -eq 0 ]; then
         echo -e "  ${GREEN}✓ Successfully resubmitted${NC}"
@@ -149,7 +156,6 @@ resubmit_job() {
 ################################################################################
 
 # Loop through all job directories
-# mpjob creates nested structure: structure_name/structure_name/calc_type/
 for structure_dir in "$CALC_DIR"/*/; do
     if [ -d "$structure_dir" ]; then
         structure_name=$(basename "$structure_dir")
@@ -205,10 +211,10 @@ for structure_dir in "$CALC_DIR"/*/; do
                 status="PENDING"
             fi
 
-            # Process based on status - only resubmit RUNNING, FAILED, and PENDING
+            # Process based on status - only restart RUNNING, FAILED, and PENDING
             case "$status" in
                 RUNNING|FAILED|PENDING)
-                    resubmit_job "$calc_dir" "$structure_name" "$job_name" "$status"
+                    restart_job "$calc_dir" "$structure_name" "$job_name" "$status"
                     ;;
                 COMPLETED)
                     skipped_jobs=$((skipped_jobs + 1))
@@ -227,8 +233,8 @@ echo "==========================================================================
 echo "Resubmission Summary"
 echo "============================================================================"
 echo -e "Total jobs scanned:           ${total_jobs}"
-echo -e "Running jobs resubmitted:     ${YELLOW}${running_resubmitted}${NC}"
-echo -e "Failed jobs resubmitted:      ${RED}${failed_resubmitted}${NC}"
+echo -e "Running jobs restarted:       ${YELLOW}${running_resubmitted}${NC}"
+echo -e "Failed jobs restarted:        ${RED}${failed_resubmitted}${NC}"
 echo -e "Pending jobs submitted:       ${BLUE}${pending_submitted}${NC}"
 echo -e "Skipped (already completed):  ${GREEN}${skipped_jobs}${NC}"
 if [ $failed_resubmits -gt 0 ]; then
@@ -238,4 +244,5 @@ fi
 echo "============================================================================"
 echo ""
 echo "Custom parameters used: $CUSTOM_PARAMS"
+echo "Failed calculations compressed to: *.tar.gz"
 echo ""
