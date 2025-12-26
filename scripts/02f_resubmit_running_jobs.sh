@@ -57,16 +57,19 @@ resubmit_job() {
 
     # Backup existing calculation directory if it's not pending
     if [ "$status" != "PENDING" ]; then
-        local backup_dir="${calc_dir}_err"
+        # Remove trailing slash from calc_dir to avoid path issues
+        local calc_dir_clean="${calc_dir%/}"
+        local backup_dir="${calc_dir_clean}_err"
+
         if [ -d "$calc_dir" ]; then
             # If backup already exists, append timestamp
             if [ -d "$backup_dir" ]; then
                 local timestamp=$(date +%Y%m%d_%H%M%S)
-                backup_dir="${calc_dir}_err_${timestamp}"
+                backup_dir="${calc_dir_clean}_err_${timestamp}"
             fi
 
             echo "  Backing up to: $(basename "$backup_dir")"
-            cp -r "$calc_dir" "$backup_dir"
+            cp -r "$calc_dir_clean" "$backup_dir"
 
             if [ $? -eq 0 ]; then
                 echo -e "  ${GREEN}✓ Backup created successfully${NC}"
