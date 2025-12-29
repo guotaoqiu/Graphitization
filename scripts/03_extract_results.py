@@ -62,6 +62,105 @@ class GraphiteResultsAnalyzer:
                                for m in meta_list}
             print(f"Loaded metadata for {len(self.metadata)} structures")
 
+    def parse_structure_name(self, structure_name):
+        """
+        Extract dopant and doping information from structure name
+
+        Expected naming patterns:
+        - graphite_int_{ELEMENT}_{site}_{supercell}  (interstitial)
+        - graphite_int_{ELEMENT}_{site}               (interstitial, 1x1x1)
+        - graphite_sub_{ELEMENT}_{supercell}         (substitutional)
+        - graphite_sub_{ELEMENT}                     (substitutional, 1x1x1)
+        - graphite_pristine_{supercell}              (pure)
+        - graphite_pristine                          (pure, 1x1x1)
+
+        Args:
+            structure_name: Name of the structure (directory or file name without .vasp)
+
+        Returns:
+            dict: Dictionary with dopant, doping_type, site, supercell info
+        """
+        info = {
+            'dopant': None,
+            'doping_type': None,
+            'site': None,
+            'supercell': '1x1x1'
+        }
+
+        # Remove .vasp extension if present
+        name = structure_name.replace('.vasp', '')
+
+        # Split by underscore
+        parts = name.split('_')
+
+        if len(parts) < 2:
+            return info
+
+        # Check if it's pristine/pure graphite
+        if 'pristine' in parts or 'pure' in parts:
+            info['doping_type'] = 'pure'
+            # Look for supercell (e.g., 2x2x1, 3x3x1)
+            for part in parts:
+                if 'x' in part and part.replace('x', '').replace('X', '').replace('0', '').replace('1', '').replace('2', '').replace('3', '').replace('4', '').replace('5', '').replace('6', '').replace('7', '').replace('8', '').replace('9', '') == '':
+                    info['supercell'] = part
+            return info
+
+        # Check for interstitial (int) or substitutional (sub)
+        if 'int' in parts:
+            info['doping_type'] = 'interstitial'
+            doping_idx = parts.index('int')
+        elif 'sub' in parts:
+            info['doping_type'] = 'substitutional'
+            doping_idx = parts.index('sub')
+        else:
+            return info
+
+        # Extract dopant element (should be right after 'int' or 'sub')
+        if doping_idx + 1 < len(parts):
+            potential_dopant = parts[doping_idx + 1]
+            # Check if it's a valid element (starts with capital letter)
+            if potential_dopant and potential_dopant[0].isupper():
+                # Handle two-letter elements (e.g., Al, Ru, etc.)
+                if len(potential_dopant) >= 2 and potential_dopant[1].islower():
+                    info['dopant'] = potential_dopant[:2]
+                else:
+                    info['dopant'] = potential_dopant[0]
+
+                # Verify it's in our chemical potentials list
+                if info['dopant'] not in CHEMICAL_POTENTIALS:
+                    # Try the full part in case it's a multi-char element
+                    if potential_dopant in CHEMICAL_POTENTIALS:
+                        info['dopant'] = potential_dopant
+
+        # Extract site information (for interstitial)
+        if info['doping_type'] == 'interstitial':
+            # Site is typically after the element (hollow, bridge, above_atom, etc.)
+            site_parts = []
+            for i in range(doping_idx + 2, len(parts)):
+                part = parts[i]
+                # Stop if we hit a supercell designation
+                if 'x' in part and len(part) <= 6:  # e.g., 2x2x1
+                    break
+                site_parts.append(part)
+            if site_parts:
+                info['site'] = '_'.join(site_parts)
+
+        # Extract supercell information (e.g., 2x2x1, 3x3x1, 4x4x1)
+        for part in parts:
+            if 'x' in part.lower():
+                # Check if it looks like a supercell (e.g., 2x2x1)
+                subparts = part.lower().split('x')
+                if len(subparts) == 3:
+                    try:
+                        # Verify all are numbers
+                        [int(x) for x in subparts]
+                        info['supercell'] = part
+                        break
+                    except ValueError:
+                        continue
+
+        return info
+
     def extract_lattice_parameters(self, structure):
         """Extract lattice parameters from structure"""
         lattice = structure.lattice
@@ -230,7 +329,12 @@ class GraphiteResultsAnalyzer:
             'status': self.check_calculation_status(job_dir),
         }
 
-        # Add metadata if available
+        # Parse structure name to extract dopant information
+        # This ensures we get dopant info even without metadata file
+        parsed_info = self.parse_structure_name(metadata_key)
+        result.update(parsed_info)
+
+        # Add/override with metadata if available (metadata takes precedence)
         if metadata_key in self.metadata:
             result.update(self.metadata[metadata_key])
 
@@ -517,6 +621,35 @@ class GraphiteResultsAnalyzer:
             f.write("\n" + "="*70 + "\n")
 
         print(f"✓ Summary report saved to: {report_path}")
+
+
+def test_structure_name_parsing():
+    """Test the structure name parsing function"""
+    print("\n" + "="*70)
+    print("Testing Structure Name Parsing")
+    print("="*70)
+
+    analyzer = GraphiteResultsAnalyzer('.', None)
+
+    test_cases = [
+        'graphite_int_Al_above_atom_2x2x1',
+        'graphite_int_K_hollow_4x4x1',
+        'graphite_int_Ru_bridge_alt',
+        'graphite_sub_Ru_2x2x1',
+        'graphite_pristine_3x3x1',
+        'graphite_int_Ta_bridge',
+        'graphite_int_Hf_bridge_alt_4x4x1',
+    ]
+
+    for test_name in test_cases:
+        info = analyzer.parse_structure_name(test_name)
+        print(f"\n{test_name}:")
+        print(f"  Dopant: {info['dopant']}")
+        print(f"  Type: {info['doping_type']}")
+        print(f"  Site: {info['site']}")
+        print(f"  Supercell: {info['supercell']}")
+
+    print("\n" + "="*70 + "\n")
 
 
 def main():
