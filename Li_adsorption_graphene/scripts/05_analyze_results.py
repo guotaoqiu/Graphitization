@@ -140,7 +140,18 @@ class LiAdsorptionAnalyzer:
         structure_files = list(self.calc_dir_doped.glob("*.vasp"))
         print(f"Found {len(structure_files)} structure files\n")
 
-        for vasp_file in sorted(structure_files):
+        # IMPORTANT: Process pristine first to get reference energy
+        # Sort so pristine comes first, then alphabetically by dopant
+        def sort_key(vasp_file):
+            name = vasp_file.stem
+            if 'pristine' in name:
+                return (0, name)  # Pristine first
+            else:
+                return (1, name)  # Then others alphabetically
+
+        structure_files_sorted = sorted(structure_files, key=sort_key)
+
+        for vasp_file in structure_files_sorted:
             structure_name = vasp_file.stem  # Remove .vasp extension
             print(f"Analyzing: {structure_name}")
 
@@ -393,6 +404,8 @@ class LiAdsorptionAnalyzer:
                         formation_data = formation_data.sort_values('formation_energy')
                         for _, row in formation_data.iterrows():
                             dopant = row.get('dopant', 'Unknown')
+                            if dopant is None or pd.isna(dopant):
+                                continue  # Skip None/NaN dopants
                             Ef = row['formation_energy']
                             f.write(f"  {dopant:>3s}: {Ef:>8.4f} eV\n")
                     f.write("\n")
