@@ -43,8 +43,14 @@ def analyze_interlayer_spacing(df):
         print("No interlayer spacing data available")
         return None
 
+    # Filter out 2x2x1 supercells (anomalous interlayer spacing)
+    if 'supercell' in df.columns:
+        df_filtered = df[df['supercell'] != '2x2x1'].copy()
+        print(f"\nFiltered out {len(df) - len(df_filtered)} structures with 2x2x1 supercell (anomalous)")
+        df = df_filtered
+
     # Overall statistics
-    print("\nOverall Statistics:")
+    print("\nOverall Statistics (excluding 2x2x1):")
     print(f"  Mean interlayer spacing: {df['avg_interlayer_spacing'].mean():.4f} Å")
     print(f"  Std deviation: {df['avg_interlayer_spacing'].std():.4f} Å")
     print(f"  Min: {df['avg_interlayer_spacing'].min():.4f} Å")
@@ -166,6 +172,10 @@ def identify_graphitization_promoters(df):
         print("Insufficient data for graphitization analysis")
         return None
 
+    # Filter out 2x2x1 supercells (anomalous interlayer spacing)
+    if 'supercell' in df.columns:
+        df = df[df['supercell'] != '2x2x1'].copy()
+
     # Calculate average spacing by dopant
     spacing_by_dopant = df.groupby('dopant')['avg_interlayer_spacing'].mean().sort_values(ascending=False)
 
@@ -226,7 +236,7 @@ def plot_concentration_analysis(df, output_dir='../03_analysis'):
         'c': ('Lattice Parameter c (Å)', 'concentration_vs_c.png'),
         'avg_interlayer_spacing': ('Layer Spacing (Å)', 'concentration_vs_spacing.png'),
         'volume': ('Volume (Å³)', 'concentration_vs_volume.png'),
-        'formation_energy': ('Formation Energy (eV)', 'concentration_vs_formation_energy.png'),
+        'formation_energy_per_atom': ('Formation Energy per Atom (eV/atom)', 'concentration_vs_formation_energy_per_atom.png'),
     }
 
     regression_results = {}
@@ -332,14 +342,19 @@ def create_plots(df, output_dir='../03_analysis'):
     print("CREATING PLOTS")
     print("="*70)
 
-    # Plot 1: Interlayer spacing by dopant
+    # Plot 1: Interlayer spacing by dopant (excluding 2x2x1)
     if 'dopant' in df.columns and 'avg_interlayer_spacing' in df.columns:
+        # Filter out 2x2x1 supercells
+        df_plot = df.copy()
+        if 'supercell' in df_plot.columns:
+            df_plot = df_plot[df_plot['supercell'] != '2x2x1']
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        spacing_by_dopant = df.groupby('dopant')['avg_interlayer_spacing'].mean().sort_values()
+        spacing_by_dopant = df_plot.groupby('dopant')['avg_interlayer_spacing'].mean().sort_values()
         spacing_by_dopant.plot(kind='barh', ax=ax, color='steelblue')
         ax.set_xlabel('Average Interlayer Spacing (Å)', fontsize=12)
         ax.set_ylabel('Dopant Element', fontsize=12)
-        ax.set_title('Effect of Doping on Graphite Interlayer Spacing', fontsize=14, fontweight='bold')
+        ax.set_title('Effect of Doping on Graphite Interlayer Spacing (excluding 2x2x1)', fontsize=14, fontweight='bold')
         ax.grid(axis='x', alpha=0.3)
         plt.tight_layout()
         plot_path = output_dir / 'interlayer_spacing_by_dopant.png'
@@ -349,8 +364,13 @@ def create_plots(df, output_dir='../03_analysis'):
 
     # Plot 2: Comparison by doping type
     if 'dopant' in df.columns and 'doping_type' in df.columns and 'avg_interlayer_spacing' in df.columns:
+        # Filter out 2x2x1 supercells
+        df_plot = df.copy()
+        if 'supercell' in df_plot.columns:
+            df_plot = df_plot[df_plot['supercell'] != '2x2x1']
+
         fig, ax = plt.subplots(figsize=(12, 6))
-        pivot = df.pivot_table(
+        pivot = df_plot.pivot_table(
             values='avg_interlayer_spacing',
             index='dopant',
             columns='doping_type',
@@ -361,10 +381,18 @@ def create_plots(df, output_dir='../03_analysis'):
         if len(pivot.columns) > 0:
             pivot = pivot.sort_values(by=pivot.columns[0])
 
-        pivot.plot(kind='bar', ax=ax, width=0.8)
+        # Define consistent colors: pink for interstitial, green for substitutional
+        color_map = {
+            'interstitial': 'hotpink',
+            'substitutional': 'mediumseagreen',
+            'pure': 'lightgray'
+        }
+        colors = [color_map.get(col, 'steelblue') for col in pivot.columns]
+
+        pivot.plot(kind='bar', ax=ax, width=0.8, color=colors)
         ax.set_xlabel('Dopant Element', fontsize=12)
         ax.set_ylabel('Interlayer Spacing (Å)', fontsize=12)
-        ax.set_title('Substitutional vs Interstitial Doping Effects', fontsize=14, fontweight='bold')
+        ax.set_title('Substitutional vs Interstitial Doping Effects (excluding 2x2x1)', fontsize=14, fontweight='bold')
         ax.legend(title='Doping Type', fontsize=10)
         ax.grid(axis='y', alpha=0.3)
         plt.xticks(rotation=45)
@@ -374,36 +402,47 @@ def create_plots(df, output_dir='../03_analysis'):
         print(f"✓ Saved: {plot_path}")
         plt.close()
 
-    # Plot 3: Formation energy vs interlayer spacing
+    # Plot 3: Formation energy vs interlayer spacing (colored by doping type)
     if 'formation_energy_per_atom' in df.columns and 'avg_interlayer_spacing' in df.columns:
+        # Filter out 2x2x1 supercells and pure structures
+        df_plot = df[df.get('doping_type', '') != 'pure'].copy()
+        if 'supercell' in df_plot.columns:
+            df_plot = df_plot[df_plot['supercell'] != '2x2x1']
+
         fig, ax = plt.subplots(figsize=(10, 8))
 
-        if 'dopant' in df.columns:
-            dopants = df['dopant'].unique()
-            colors = plt.cm.tab10(np.linspace(0, 1, len(dopants)))
+        # Color by doping type: pink for interstitial, green for substitutional
+        color_map = {
+            'interstitial': 'hotpink',
+            'substitutional': 'mediumseagreen',
+        }
 
-            for dopant, color in zip(dopants, colors):
-                subset = df[df['dopant'] == dopant]
-                ax.scatter(
-                    subset['formation_energy_per_atom'],
-                    subset['avg_interlayer_spacing'],
-                    label=dopant,
-                    s=100,
-                    alpha=0.7,
-                    color=color
-                )
+        if 'doping_type' in df_plot.columns:
+            for doping_type, color in color_map.items():
+                subset = df_plot[df_plot['doping_type'] == doping_type]
+                if len(subset) > 0:
+                    ax.scatter(
+                        subset['formation_energy_per_atom'],
+                        subset['avg_interlayer_spacing'],
+                        label=doping_type.capitalize(),
+                        s=100,
+                        alpha=0.6,
+                        color=color,
+                        edgecolors='black',
+                        linewidths=0.5
+                    )
         else:
             ax.scatter(
-                df['formation_energy_per_atom'],
-                df['avg_interlayer_spacing'],
+                df_plot['formation_energy_per_atom'],
+                df_plot['avg_interlayer_spacing'],
                 s=100,
                 alpha=0.7
             )
 
-        ax.set_xlabel('Formation Energy per Atom (eV/atom)', fontsize=12)
-        ax.set_ylabel('Interlayer Spacing (Å)', fontsize=12)
-        ax.set_title('Formation Energy vs Interlayer Spacing', fontsize=14, fontweight='bold')
-        ax.legend(fontsize=9, ncol=2)
+        ax.set_xlabel('Formation Energy per Atom (eV/atom)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Interlayer Spacing (Å)', fontsize=12, fontweight='bold')
+        ax.set_title('Formation Energy vs Interlayer Spacing (excluding 2x2x1)', fontsize=14, fontweight='bold')
+        ax.legend(fontsize=11)
         ax.grid(alpha=0.3)
         plt.tight_layout()
         plot_path = output_dir / 'energy_vs_spacing.png'
@@ -419,18 +458,24 @@ def export_key_findings(df, output_dir='../03_analysis'):
     output_dir = Path(output_dir)
     findings = {}
 
-    # Overall statistics
-    if 'avg_interlayer_spacing' in df.columns:
+    # Filter out 2x2x1 supercells for interlayer spacing analysis
+    df_spacing = df.copy()
+    if 'supercell' in df_spacing.columns:
+        df_spacing = df_spacing[df_spacing['supercell'] != '2x2x1']
+
+    # Overall statistics (excluding 2x2x1)
+    if 'avg_interlayer_spacing' in df_spacing.columns:
         findings['interlayer_spacing'] = {
-            'mean': float(df['avg_interlayer_spacing'].mean()),
-            'std': float(df['avg_interlayer_spacing'].std()),
-            'min': float(df['avg_interlayer_spacing'].min()),
-            'max': float(df['avg_interlayer_spacing'].max()),
+            'mean': float(df_spacing['avg_interlayer_spacing'].mean()),
+            'std': float(df_spacing['avg_interlayer_spacing'].std()),
+            'min': float(df_spacing['avg_interlayer_spacing'].min()),
+            'max': float(df_spacing['avg_interlayer_spacing'].max()),
+            'note': 'Statistics exclude 2x2x1 supercells (anomalous)'
         }
 
-    # Best promoters
-    if 'dopant' in df.columns and 'avg_interlayer_spacing' in df.columns:
-        spacing_by_dopant = df.groupby('dopant')['avg_interlayer_spacing'].mean().sort_values(ascending=False)
+    # Best promoters (excluding 2x2x1)
+    if 'dopant' in df_spacing.columns and 'avg_interlayer_spacing' in df_spacing.columns:
+        spacing_by_dopant = df_spacing.groupby('dopant')['avg_interlayer_spacing'].mean().sort_values(ascending=False)
         findings['top_graphitization_promoters'] = {
             dopant: float(spacing)
             for dopant, spacing in spacing_by_dopant.head(5).items()
