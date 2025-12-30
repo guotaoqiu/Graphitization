@@ -70,6 +70,21 @@ class LiAdsorptionAnalyzer:
         self.E_C = CHEMICAL_POTENTIALS.get('C', -9.2286654925)
         self.E_Li = CHEMICAL_POTENTIALS.get('Li', -1.9089228666666667)
 
+    def find_calculation_dir(self, base_dir, structure_name):
+        """
+        Find the actual calculation directory (PBE_U_relax or u_relax)
+
+        mpjob creates: base_dir/structure_name/PBE_U_relax/
+        """
+        patterns = [
+            base_dir / structure_name / "PBE_U_relax",
+            base_dir / structure_name / "u_relax",
+        ]
+        for calc_path in patterns:
+            if calc_path.exists() and (calc_path / 'OUTCAR').exists():
+                return calc_path
+        return None
+
     def check_calculation_status(self, job_dir):
         """Check if calculation completed successfully"""
         outcar_path = job_dir / 'OUTCAR'
@@ -121,17 +136,32 @@ class LiAdsorptionAnalyzer:
             print(f"Warning: {self.calc_dir_doped} does not exist")
             return
 
-        # Find all calculation directories
-        calc_dirs = [d for d in self.calc_dir_doped.iterdir() if d.is_dir()]
+        # Find all structure directories (look for .vasp files)
+        structure_files = list(self.calc_dir_doped.glob("*.vasp"))
+        print(f"Found {len(structure_files)} structure files\n")
 
-        print(f"Found {len(calc_dirs)} calculation directories\n")
-
-        for calc_dir in sorted(calc_dirs):
-            structure_name = calc_dir.name
+        for vasp_file in sorted(structure_files):
+            structure_name = vasp_file.stem  # Remove .vasp extension
             print(f"Analyzing: {structure_name}")
+
+            # Find the actual calculation directory
+            calc_dir = self.find_calculation_dir(self.calc_dir_doped, structure_name)
+
+            if calc_dir is None:
+                print(f"  Status: not_started (no calculation directory found)")
+                result = {
+                    'structure_name': structure_name,
+                    'status': 'not_started',
+                    'energy': None,
+                    'formation_energy': None,
+                }
+                self.results['doped_structures'].append(result)
+                print()
+                continue
 
             status = self.check_calculation_status(calc_dir)
             print(f"  Status: {status}")
+            print(f"  Calculation dir: {calc_dir}")
 
             result = {
                 'structure_name': structure_name,
@@ -210,17 +240,46 @@ class LiAdsorptionAnalyzer:
 
         print(f"Available slab energies: {list(slab_energies.keys())}\n")
 
-        # Find all calculation directories
-        calc_dirs = [d for d in self.calc_dir_adsorption.iterdir() if d.is_dir()]
+        # Find all structure directories (look for .vasp files)
+        structure_files = list(self.calc_dir_adsorption.glob("*.vasp"))
+        print(f"Found {len(structure_files)} structure files\n")
 
-        print(f"Found {len(calc_dirs)} calculation directories\n")
-
-        for calc_dir in sorted(calc_dirs):
-            structure_name = calc_dir.name
+        for vasp_file in sorted(structure_files):
+            structure_name = vasp_file.stem  # Remove .vasp extension
             print(f"Analyzing: {structure_name}")
+
+            # Find the actual calculation directory
+            calc_dir = self.find_calculation_dir(self.calc_dir_adsorption, structure_name)
+
+            if calc_dir is None:
+                print(f"  Status: not_started (no calculation directory found)")
+                result = {
+                    'structure_name': structure_name,
+                    'status': 'not_started',
+                    'energy': None,
+                    'adsorption_energy': None,
+                }
+
+                # Parse structure name for metadata
+                parts = structure_name.split('_')
+                if 'pristine' in structure_name:
+                    result['substrate'] = 'pristine'
+                    result['dopant'] = None
+                    if len(parts) >= 4:
+                        result['adsorption_site'] = '_'.join(parts[3:])
+                else:
+                    if len(parts) >= 4:
+                        result['dopant'] = parts[1]
+                        result['substrate'] = 'doped'
+                        result['adsorption_site'] = '_'.join(parts[3:])
+
+                self.results['adsorption_structures'].append(result)
+                print()
+                continue
 
             status = self.check_calculation_status(calc_dir)
             print(f"  Status: {status}")
+            print(f"  Calculation dir: {calc_dir}")
 
             # Parse structure name: graphene_[dopant]_Li_[site] or graphene_pristine_Li_[site]
             parts = structure_name.split('_')
@@ -402,9 +461,14 @@ class LiAdsorptionAnalyzer:
 
 def main():
     """Main function"""
-    CALC_DIR_DOPED = "../03_calculations/doped_relaxation"
-    CALC_DIR_ADSORPTION = "../03_calculations/adsorption"
-    OUTPUT_DIR = "../04_analysis"
+    # Get script directory for absolute paths
+    import os
+    SCRIPT_DIR = Path(__file__).resolve().parent
+
+    # mpjob creates calculations in the same directory as input structures
+    CALC_DIR_DOPED = SCRIPT_DIR / ".." / "01_doped_structures"
+    CALC_DIR_ADSORPTION = SCRIPT_DIR / ".." / "02_adsorption_structures"
+    OUTPUT_DIR = SCRIPT_DIR / ".." / "04_analysis"
 
     print("=" * 80)
     print("Li Adsorption on Doped Graphene - Results Analysis")
